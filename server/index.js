@@ -115,53 +115,26 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
     const serpRunData = await serpRunResponse.json();
     const runId = serpRunData.data.id;
+    const datasetId = serpRunData.data.defaultDatasetId;
     console.log(`📡 SERP run started with ID: ${runId}`);
+    console.log(`📊 SERP dataset ID: ${datasetId}`);
 
-    // Wait for SERP run to complete
-    console.log(`⏳ Waiting for SERP run to complete...`);
-    let serpData = null;
-    let attempts = 0;
-    const maxAttempts = 60; // Wait up to 5 minutes
-
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-      attempts++;
-
-      const statusResponse = await fetch(`https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs/${runId}`, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
-      });
-
-      if (!statusResponse.ok) {
-        console.error(`❌ Status check failed: ${statusResponse.status}`);
-        continue;
+    // Get results directly from dataset (like your Make.com flow)
+    console.log(`📊 Fetching SERP results from dataset...`);
+    const serpResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
       }
+    });
 
-      const statusData = await statusResponse.json();
-      console.log(`📊 SERP run status: ${statusData.data.status} (attempt ${attempts}/${maxAttempts})`);
-
-      if (statusData.data.status === 'SUCCEEDED') {
-        // Get the results from dataset
-        const resultsResponse = await fetch(`https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs/${runId}/dataset/items`, {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`
-          }
-        });
-
-        if (resultsResponse.ok) {
-          serpData = await resultsResponse.json();
-          console.log(`✅ SERP results received`);
-          break;
-        }
-      } else if (statusData.data.status === 'FAILED' || statusData.data.status === 'ABORTED') {
-        throw new Error(`SERP run failed with status: ${statusData.data.status}`);
-      }
+    if (!serpResultsResponse.ok) {
+      const errorText = await serpResultsResponse.text();
+      console.error(`❌ SERP Results Error: ${errorText}`);
+      throw new Error(`Failed to get SERP results: ${serpResultsResponse.status} ${serpResultsResponse.statusText}`);
     }
 
-    if (!serpData) {
-      throw new Error('SERP run timed out after 5 minutes');
-    }
+    const serpData = await serpResultsResponse.json();
+    console.log(`✅ SERP results received: ${serpData.length} items`);
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
 
@@ -232,53 +205,26 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
     const metricsRunData = await metricsRunResponse.json();
     const metricsRunId = metricsRunData.data.id;
+    const metricsDatasetId = metricsRunData.data.defaultDatasetId;
     console.log(`📊 Metrics run started with ID: ${metricsRunId}`);
+    console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
 
-    // Wait for Metrics run to complete
-    console.log(`⏳ Waiting for Metrics run to complete...`);
-    let metricsData = null;
-    let metricsAttempts = 0;
-    const maxMetricsAttempts = 60; // Wait up to 5 minutes
-
-    while (metricsAttempts < maxMetricsAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-      metricsAttempts++;
-
-      const metricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
-      });
-
-      if (!metricsStatusResponse.ok) {
-        console.error(`❌ Metrics status check failed: ${metricsStatusResponse.status}`);
-        continue;
+    // Get results directly from dataset (like your Make.com flow)
+    console.log(`📊 Fetching Metrics results from dataset...`);
+    const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
       }
+    });
 
-      const metricsStatusData = await metricsStatusResponse.json();
-      console.log(`📊 Metrics run status: ${metricsStatusData.data.status} (attempt ${metricsAttempts}/${maxMetricsAttempts})`);
-
-      if (metricsStatusData.data.status === 'SUCCEEDED') {
-        // Get the results from dataset
-        const metricsResultsResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}/dataset/items`, {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`
-          }
-        });
-
-        if (metricsResultsResponse.ok) {
-          metricsData = await metricsResultsResponse.json();
-          console.log(`✅ Metrics results received`);
-          break;
-        }
-      } else if (metricsStatusData.data.status === 'FAILED' || metricsStatusData.data.status === 'ABORTED') {
-        throw new Error(`Metrics run failed with status: ${metricsStatusData.data.status}`);
-      }
+    if (!metricsResultsResponse.ok) {
+      const errorText = await metricsResultsResponse.text();
+      console.error(`❌ Metrics Results Error: ${errorText}`);
+      throw new Error(`Failed to get Metrics results: ${metricsResultsResponse.status} ${metricsResultsResponse.statusText}`);
     }
 
-    if (!metricsData) {
-      throw new Error('Metrics run timed out after 5 minutes');
-    }
+    const metricsData = await metricsResultsResponse.json();
+    console.log(`✅ Metrics results received: ${metricsData.length} items`);
     console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
     console.log(`📊 Metrics data structure:`, Object.keys(metricsData));
     console.log(`📊 Metrics data sample:`, metricsData.slice(0, 2));
