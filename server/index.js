@@ -142,10 +142,6 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    if (urls.length === 0) {
-      throw new Error('No URLs found in SERP results');
-    }
-
     // Step 2: Get DA/PA metrics using the same actor as your working Make.com flow
     console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
     const metricsResponse = await fetch('https://api.apify.com/v2/acts/1fNnRSV43DvkFqpvQ/run-sync', {
@@ -273,6 +269,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     console.log(`🔑 Found ${apiKeys.length} API keys for user ${req.user.id}`);
     apiKeys.forEach((key, index) => {
       console.log(`  ${index + 1}. ${key.key_name} - Status: ${key.status} - Last used: ${key.last_used || 'Never'}`);
+      console.log(`     Key name: "${key.key_name}" (length: ${key.key_name?.length || 0})`);
     });
 
     const results = [];
@@ -298,7 +295,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
           const lowDACount = das.filter(da => da < 35).length;
           const decision = averageDA < 50 && lowDACount >= 5 ? 'Write' : 'Skip';
 
-          results.push({
+          const result = {
             keyword,
             api_key_used: currentKey.key_name, // Add the API key name used
             domains: domains.slice(0, 5), // Top 5 domains
@@ -307,7 +304,16 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
             decision,
             serp_features: serpResult.serp_features?.slice(0, 3) || [],
             full_results: serpResult.results // Include full SERP data
+          };
+          
+          console.log(`✅ Created result for ${keyword}:`, {
+            keyword: result.keyword,
+            api_key_used: result.api_key_used,
+            decision: result.decision,
+            average_da: result.average_da
           });
+          
+          results.push(result);
 
           // Update key usage - mark as active if it was previously failed
           await supabase.from('api_keys').update({
@@ -321,7 +327,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
           console.log(`✅ Successfully used API key: ${currentKey.key_name}`);
           
         } catch (error) {
-          console.error(`Error with API key ${currentKey.key_name}:`, error.message);
+          console.error(`❌ Error with API key ${currentKey.key_name}:`, error.message);
+          console.error(`❌ Full error details:`, error);
           
           // Check if it's a rate limit, credit issue, or invalid key
           const isRateLimit = error.message.includes('rate') || error.message.includes('credit') || error.message.includes('429');
@@ -360,12 +367,15 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
 
       if (!success) {
         // If all keys failed for this keyword, add a failure result
-        results.push({
+        const errorResult = {
           keyword,
           api_key_used: null, // No API key was successfully used
           error: 'All API keys failed or rate limited',
           decision: 'Error'
-        });
+        };
+        
+        console.log(`❌ Adding error result for ${keyword}:`, errorResult);
+        results.push(errorResult);
       }
     }
 
@@ -379,20 +389,28 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       processing_time: processingTime
     }).eq('request_id', requestId);
 
+    const finalResults = results.map(result => ({
+      keyword: result.keyword,
+      api_key_used: result.api_key_used, // Include the API key name used
+      domains: result.domains,
+      average_da: result.average_da,
+      low_da_count: result.low_da_count,
+      decision: result.decision,
+      serp_features: result.serp_features,
+      full_results: result.full_results // Complete SERP data with DA/PA metrics
+    }));
+    
+    console.log(`📊 Final response mapping:`, finalResults.map(r => ({
+      keyword: r.keyword,
+      api_key_used: r.api_key_used,
+      decision: r.decision
+    })));
+    
     res.json({
       request_id: requestId,
       keywords_processed: keywords.length,
       processing_time: processingTime,
-      results: results.map(result => ({
-        keyword: result.keyword,
-        api_key_used: result.api_key_used, // Include the API key name used
-        domains: result.domains,
-        average_da: result.average_da,
-        low_da_count: result.low_da_count,
-        decision: result.decision,
-        serp_features: result.serp_features,
-        full_results: result.full_results // Complete SERP data with DA/PA metrics
-      }))
+      results: finalResults
     });
 
   } catch (error) {
@@ -510,6 +528,11 @@ app.get('/api/debug/keys', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Database error', details: error });
     }
     
+    console.log(`🔍 Debug: Found ${apiKeys.length} API keys for user ${req.user.id}`);
+    apiKeys.forEach((key, index) => {
+      console.log(`  ${index + 1}. ID: ${key.id}, Name: "${key.key_name}", Status: ${key.status}`);
+    });
+    
     res.json({
       user_id: req.user.id,
       total_keys: apiKeys.length,
@@ -524,6 +547,7 @@ app.get('/api/debug/keys', authMiddleware, async (req, res) => {
       }))
     });
   } catch (error) {
+    console.error('Debug keys error:', error);
     res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
