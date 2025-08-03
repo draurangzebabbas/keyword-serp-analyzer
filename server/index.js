@@ -163,7 +163,17 @@ const callApifySerpApi = async (keyword, apiKey) => {
 
   } catch (error) {
     console.error(`❌ Apify API error for ${keyword}:`, error.message);
-    throw error;
+    
+    // Provide more specific error messages
+    if (error.message.includes('401')) {
+      throw new Error('Invalid API key - please check your Apify API key');
+    } else if (error.message.includes('429')) {
+      throw new Error('Rate limit exceeded - API key may be out of credits');
+    } else if (error.message.includes('404')) {
+      throw new Error('Apify actor not found - please check actor configuration');
+    } else {
+      throw new Error(`Apify API error: ${error.message}`);
+    }
   }
 };
 
@@ -197,26 +207,31 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       status: 'pending'
     });
 
-    // Get user's API keys
+    // Get user's API keys - include failed keys that can be retried
     const { data: apiKeys, error: keysError } = await supabase
       .from('api_keys')
       .select('*')
       .eq('user_id', req.user.id)
-      .eq('status', 'active')
+      .in('status', ['active', 'failed', 'rate_limited'])
       .order('last_used', { ascending: true, nullsFirst: true });
 
     if (keysError || !apiKeys || apiKeys.length === 0) {
       await supabase.from('analysis_logs').update({
         status: 'failed',
-        error_message: 'No active API keys available',
+        error_message: 'No API keys available',
         processing_time: Date.now() - startTime
       }).eq('request_id', requestId);
 
       return res.status(400).json({ 
         error: 'No API keys', 
-        message: 'Please add at least one active Apify API key' 
+        message: 'Please add at least one Apify API key' 
       });
     }
+
+    console.log(`🔑 Found ${apiKeys.length} API keys for user ${req.user.id}`);
+    apiKeys.forEach((key, index) => {
+      console.log(`  ${index + 1}. ${key.key_name} - Status: ${key.status} - Last used: ${key.last_used || 'Never'}`);
+    });
 
     const results = [];
     const usedKeys = [];
@@ -251,20 +266,23 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
             full_results: serpResult.results // Include full SERP data
           });
 
-          // Update key usage
+          // Update key usage - mark as active if it was previously failed
           await supabase.from('api_keys').update({
             last_used: new Date().toISOString(),
-            failure_count: 0
+            failure_count: 0,
+            status: 'active' // Reset status to active on successful use
           }).eq('id', currentKey.id);
 
           usedKeys.push(currentKey.id);
           success = true;
+          console.log(`✅ Successfully used API key: ${currentKey.key_name}`);
           
         } catch (error) {
-          console.error(`Error with API key ${currentKey.id}:`, error.message);
+          console.error(`Error with API key ${currentKey.key_name}:`, error.message);
           
-          // Check if it's a rate limit or credit issue
+          // Check if it's a rate limit, credit issue, or invalid key
           const isRateLimit = error.message.includes('rate') || error.message.includes('credit') || error.message.includes('429');
+          const isInvalidKey = error.message.includes('Invalid API key') || error.message.includes('401');
           
           if (isRateLimit) {
             // Mark key as rate limited
@@ -273,16 +291,26 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
               last_failed: new Date().toISOString(),
               failure_count: currentKey.failure_count + 1
             }).eq('id', currentKey.id);
-          } else {
-            // Mark key as failed
+            console.log(`⚠️ Marked API key as rate limited: ${currentKey.key_name}`);
+          } else if (isInvalidKey) {
+            // Mark key as failed permanently
             await supabase.from('api_keys').update({
               status: 'failed',
               last_failed: new Date().toISOString(),
               failure_count: currentKey.failure_count + 1
             }).eq('id', currentKey.id);
+            console.log(`❌ Marked API key as failed: ${currentKey.key_name}`);
+          } else {
+            // Mark key as failed temporarily
+            await supabase.from('api_keys').update({
+              status: 'failed',
+              last_failed: new Date().toISOString(),
+              failure_count: currentKey.failure_count + 1
+            }).eq('id', currentKey.id);
+            console.log(`⚠️ Marked API key as failed: ${currentKey.key_name}`);
           }
 
-                    attempts++;
+          attempts++;
           currentKeyIndex++;
         }
       }
@@ -364,6 +392,36 @@ app.get('/api/test', (req, res) => {
     webhook_url: webhookUrl,
     environment: process.env.NODE_ENV || 'development'
   });
+});
+
+// Debug endpoint to check API keys (requires authentication)
+app.get('/api/debug/keys', authMiddleware, async (req, res) => {
+  try {
+    const { data: apiKeys, error } = await supabase
+      .from('api_keys')
+      .select('*')
+      .eq('user_id', req.user.id);
+    
+    if (error) {
+      return res.status(500).json({ error: 'Database error', details: error });
+    }
+    
+    res.json({
+      user_id: req.user.id,
+      total_keys: apiKeys.length,
+      keys: apiKeys.map(key => ({
+        id: key.id,
+        name: key.key_name,
+        status: key.status,
+        provider: key.provider,
+        last_used: key.last_used,
+        failure_count: key.failure_count,
+        created_at: key.created_at
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
 });
 
 // Start server
