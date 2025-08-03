@@ -1,4 +1,4 @@
-// This worked great just mapping issue
+//Flatt output for mapping
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -653,16 +653,40 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       processing_time: processingTime
     }).eq('request_id', requestId);
 
-    const finalResults = results.map(result => ({
-      keyword: result.keyword,
-      api_key_used: result.api_key_used, // Include the API key name used
-      domains: result.domains,
-      average_da: result.average_da,
-      low_da_count: result.low_da_count,
-      decision: result.decision,
-      serp_features: result.serp_features,
-      full_results: result.full_results // Complete SERP data with DA/PA metrics
-    }));
+    const finalResults = results.map(result => {
+      // Format SERP results as readable text
+      const serpResultsText = result.full_results.map(item => 
+        `Position: ${item.position}\n` +
+        `Title: ${item.title}\n` +
+        `Description: ${item.description}\n` +
+        `URL: ${item.url}\n` +
+        `DA: ${item.domain_authority}\n` +
+        `PA: ${item.page_authority}\n` +
+        `Spam Score: ${item.spam_score}\n`
+      ).join('\n');
+
+      // Format related keywords as readable text
+      const relatedKeywordsText = result.serp_features.map(item => 
+        `Position ${item.position}: ${item.keyword}`
+      ).join('\n');
+
+      // Format domains as readable text
+      const domainsText = result.domains.join('\n');
+
+      return {
+        keyword: result.keyword,
+        api_key_used: result.api_key_used,
+        domains: result.domains,
+        domains_text: domainsText, // Formatted domains
+        average_da: result.average_da,
+        low_da_count: result.low_da_count,
+        decision: result.decision,
+        serp_features: result.serp_features,
+        related_keywords_text: relatedKeywordsText, // Formatted related keywords
+        full_results: result.full_results,
+        serp_results_text: serpResultsText // Formatted SERP results
+      };
+    });
     
     console.log(`📊 Final response mapping:`, finalResults.map(r => ({
       keyword: r.keyword,
