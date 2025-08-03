@@ -89,7 +89,7 @@ const callApifySerpApi = async (keyword, apiKey) => {
   
   try {
     // Step 1: Get SERP results using scraperlink/google-search-results-serp-scraper
-    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs', {
+    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -104,11 +104,14 @@ const callApifySerpApi = async (keyword, apiKey) => {
     });
 
     if (!serpResponse.ok) {
-      throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText}`);
+      const errorText = await serpResponse.text();
+      console.error(`❌ SERP API Error Response: ${errorText}`);
+      throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText} - ${errorText}`);
     }
 
     const serpData = await serpResponse.json();
     console.log(`✅ SERP data received for: ${keyword}`);
+    console.log(`📊 SERP data structure:`, Object.keys(serpData));
 
     // Extract URLs from SERP results
     const urls = serpData.results?.map(result => result.url) || [];
@@ -119,7 +122,7 @@ const callApifySerpApi = async (keyword, apiKey) => {
     }
 
     // Step 2: Get DA/PA metrics using scrap3r/moz-da-pa-metrics
-    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
+    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -131,11 +134,14 @@ const callApifySerpApi = async (keyword, apiKey) => {
     });
 
     if (!metricsResponse.ok) {
-      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
+      const errorText = await metricsResponse.text();
+      console.error(`❌ Metrics API Error Response: ${errorText}`);
+      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText} - ${errorText}`);
     }
 
     const metricsData = await metricsResponse.json();
     console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
+    console.log(`📊 Metrics data structure:`, Object.keys(metricsData));
 
     // Step 3: Combine SERP results with metrics
     const combinedResults = serpData.results?.map((result, index) => {
@@ -421,6 +427,43 @@ app.get('/api/debug/keys', authMiddleware, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+// Test Apify API key endpoint
+app.post('/api/test-apify', authMiddleware, async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    
+    if (!apiKey) {
+      return res.status(400).json({ error: 'API key required' });
+    }
+    
+    // Test with a simple keyword
+    const testResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        "keyword": "test",
+        "num": 1
+      })
+    });
+    
+    const responseText = await testResponse.text();
+    const responseData = testResponse.ok ? JSON.parse(responseText) : null;
+    
+    res.json({
+      status: testResponse.status,
+      ok: testResponse.ok,
+      response_text: responseText,
+      response_data: responseData
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: 'Test failed', details: error.message });
   }
 });
 
