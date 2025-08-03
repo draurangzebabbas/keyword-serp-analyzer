@@ -84,14 +84,14 @@ const authMiddleware = async (req, res, next) => {
 };
 
 // Real Apify SERP API integration - matches your working Make.com flow exactly
-const callApifySerpApi = async (keyword, apiKey) => {
+const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
   console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
   console.log(`🔑 API key length: ${apiKey.length}`);
   console.log(`🔑 API key starts with: ${apiKey.substring(0, 10)}...`);
   
   try {
     // Step 1: Get SERP results synchronously - EXACTLY like your Make.com flow
-    console.log(`📡 Calling Apify SERP API for keyword: ${keyword}`);
+    console.log(`📡 Calling Apify SERP API for keyword: ${keyword}, country: ${country}, page: ${page}`);
     const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
       headers: {
@@ -99,7 +99,9 @@ const callApifySerpApi = async (keyword, apiKey) => {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        "keyword": keyword
+        "country": country,
+        "keyword": keyword,
+        "page": page
       })
     });
 
@@ -278,7 +280,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
   const requestId = uuidv4();
   
   try {
-    const { keywords } = req.body;
+    const { keywords, country = "US", page = 1 } = req.body;
     
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
       return res.status(400).json({ 
@@ -343,7 +345,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
         const currentKey = apiKeys[currentKeyIndex % apiKeys.length];
         
         try {
-          const serpResult = await callApifySerpApi(keyword, currentKey.api_key);
+          const serpResult = await callApifySerpApi(keyword, currentKey.api_key, country, page);
           
           // Calculate analysis metrics
           const domains = serpResult.results.map(r => r.url); // Use URL as domain for DA/PA
@@ -360,7 +362,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
             low_da_count: lowDACount,
             decision,
             serp_features: serpResult.serp_features?.slice(0, 3) || [],
-            full_results: serpResult.results // Include full SERP data
+            full_results: serpResult.results // Include full SERP data with DA/PA
           };
           
           console.log(`✅ Created result for ${keyword}:`, {
@@ -466,6 +468,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     res.json({
       request_id: requestId,
       keywords_processed: keywords.length,
+      country: country,
+      page: page,
       processing_time: processingTime,
       results: finalResults
     });
