@@ -86,27 +86,11 @@ const authMiddleware = async (req, res, next) => {
 // Real Apify SERP API integration - matches your working Make.com flow exactly
 const callApifySerpApi = async (keyword, apiKey) => {
   console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
+  console.log(`🔑 API key length: ${apiKey.length}`);
+  console.log(`🔑 API key starts with: ${apiKey.substring(0, 10)}...`);
   
   try {
-    // First, validate API key
-    console.log(`🔑 Validating API key...`);
-    const accountResponse = await fetch('https://api.apify.com/v2/users/me', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
-    
-    if (!accountResponse.ok) {
-      const accountError = await accountResponse.text();
-      console.error(`❌ API key validation failed: ${accountResponse.status} - ${accountError}`);
-      throw new Error(`Invalid API key: ${accountResponse.status} ${accountResponse.statusText}`);
-    }
-    
-    const accountData = await accountResponse.json();
-    console.log(`✅ API key valid for user: ${accountData.username}`);
-    
-    // Step 1: Get SERP results synchronously
+    // Step 1: Get SERP results synchronously - EXACTLY like your Make.com flow
     console.log(`📡 Calling Apify SERP API for keyword: ${keyword}`);
     const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
@@ -119,6 +103,9 @@ const callApifySerpApi = async (keyword, apiKey) => {
       })
     });
 
+    console.log(`📊 SERP Response Status: ${serpResponse.status} ${serpResponse.statusText}`);
+    console.log(`📊 SERP Response Headers:`, Object.fromEntries(serpResponse.headers.entries()));
+
     if (!serpResponse.ok) {
       const errorText = await serpResponse.text();
       console.error(`❌ SERP API Error: ${errorText}`);
@@ -126,32 +113,59 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText} - ${errorText}`);
     }
 
-    const serpData = await serpResponse.json();
+    // Get raw response text first
+    const responseText = await serpResponse.text();
+    console.log(`📊 Raw SERP response length: ${responseText.length}`);
+    console.log(`📊 Raw SERP response: ${responseText.substring(0, 1000)}...`);
+    
+    if (!responseText || responseText.trim() === '') {
+      throw new Error('Empty response from Apify SERP API');
+    }
+
+    let serpData;
+    try {
+      serpData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(`❌ JSON parse error: ${parseError.message}`);
+      console.error(`❌ Response text: ${responseText}`);
+      throw new Error(`Invalid JSON response from Apify: ${parseError.message}`);
+    }
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
 
-    // Parse SERP data - matches your example structure exactly
+    // Parse SERP data - EXACTLY like your example structure
+    console.log(`✅ SERP data received for: ${keyword}`);
+    console.log(`📊 SERP data structure:`, Object.keys(serpData));
+    
+    // Your example shows: [{ search_term, knowledge_panel, results, related_keywords, next_page, next_start }]
     let serpResults = [];
-    if (Array.isArray(serpData)) {
-      // If it's an array, take the first item (like your example)
+    let searchTerm = '';
+    let knowledgePanel = null;
+    let relatedKeywords = [];
+    
+    if (Array.isArray(serpData) && serpData.length > 0) {
       const firstItem = serpData[0];
-      if (firstItem && firstItem.results) {
-        serpResults = firstItem.results;
-        console.log(`📊 Found SERP results in array format`);
-      }
+      serpResults = firstItem.results || [];
+      searchTerm = firstItem.search_term || keyword;
+      knowledgePanel = firstItem.knowledge_panel || null;
+      relatedKeywords = firstItem.related_keywords?.keywords || [];
+      console.log(`📊 Found SERP results in array format`);
     } else if (serpData.results && Array.isArray(serpData.results)) {
       serpResults = serpData.results;
+      searchTerm = serpData.search_term || keyword;
+      knowledgePanel = serpData.knowledge_panel || null;
+      relatedKeywords = serpData.related_keywords?.keywords || [];
       console.log(`📊 Found SERP results in object format`);
     } else {
       console.error(`❌ Unexpected SERP data structure for ${keyword}:`, serpData);
       throw new Error('Unexpected SERP data structure received from Apify');
     }
-    console.log(`✅ SERP data received for: ${keyword}`);
-    console.log(`📊 SERP data structure:`, Object.keys(serpData));
     
     console.log(`📊 SERP results count:`, serpResults.length);
+    console.log(`📊 Search term:`, searchTerm);
+    console.log(`📊 Related keywords count:`, relatedKeywords.length);
 
-    // Extract URLs from SERP results - matches your example structure
+    // Extract URLs from SERP results - matches your example structure exactly
     const urls = serpResults.map(result => result.url).filter(url => url);
     
     console.log(`📊 Found ${urls.length} URLs to analyze`);
@@ -161,8 +175,10 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Get DA/PA metrics synchronously
+    // Step 2: Get DA/PA metrics synchronously - EXACTLY like your Make.com flow
     console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
+    console.log(`📊 URLs to analyze:`, urls.slice(0, 3)); // Show first 3 URLs
+    
     const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
       method: 'POST',
       headers: {
@@ -174,6 +190,9 @@ const callApifySerpApi = async (keyword, apiKey) => {
       })
     });
 
+    console.log(`📊 Metrics Response Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
+    console.log(`📊 Metrics Response Headers:`, Object.fromEntries(metricsResponse.headers.entries()));
+
     if (!metricsResponse.ok) {
       const errorText = await metricsResponse.text();
       console.error(`❌ Metrics API Error: ${errorText}`);
@@ -181,7 +200,23 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText} - ${errorText}`);
     }
 
-    const metricsData = await metricsResponse.json();
+    // Get raw response text first
+    const metricsResponseText = await metricsResponse.text();
+    console.log(`📊 Raw Metrics response length: ${metricsResponseText.length}`);
+    console.log(`📊 Raw Metrics response: ${metricsResponseText.substring(0, 1000)}...`);
+    
+    if (!metricsResponseText || metricsResponseText.trim() === '') {
+      throw new Error('Empty response from Apify Metrics API');
+    }
+
+    let metricsData;
+    try {
+      metricsData = JSON.parse(metricsResponseText);
+    } catch (parseError) {
+      console.error(`❌ Metrics JSON parse error: ${parseError.message}`);
+      console.error(`❌ Metrics response text: ${metricsResponseText}`);
+      throw new Error(`Invalid JSON response from Apify Metrics: ${parseError.message}`);
+    }
     console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
     console.log(`📊 Metrics data structure:`, Object.keys(metricsData));
     console.log(`📊 Metrics data sample:`, metricsData.slice(0, 2));
@@ -192,8 +227,9 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error('Invalid metrics data structure received from Apify');
     }
 
-    // Step 3: Combine SERP results with metrics - matches your example structure exactly
+    // Step 3: Combine SERP results with metrics - EXACTLY like your expected output
     const combinedResults = serpResults.map((result, index) => {
+      // Find matching metrics by domain URL
       const metrics = metricsData.find(m => m.domain === result.url) || {};
       
       return {
@@ -206,20 +242,12 @@ const callApifySerpApi = async (keyword, apiKey) => {
         spam_score: metrics.spam_score || 0
       };
     });
-
-    console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
+    
+        console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
+    console.log(`📊 Sample combined result:`, combinedResults[0]);
     
     // Extract related keywords and knowledge panel from the first item if it's an array
-    let relatedKeywords = [];
-    let knowledgePanel = null;
-    
-    if (Array.isArray(serpData) && serpData[0]) {
-      relatedKeywords = serpData[0].related_keywords?.keywords || [];
-      knowledgePanel = serpData[0].knowledge_panel || null;
-    } else if (serpData.related_keywords) {
-      relatedKeywords = serpData.related_keywords.keywords || [];
-      knowledgePanel = serpData.knowledge_panel || null;
-    }
+    // (These are already extracted above, so we don't need to do it again)
     
     return {
       keyword: keyword,
