@@ -135,22 +135,40 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     const datasetId = serpRunData.defaultDatasetId;
     console.log(`📊 SERP dataset ID: ${datasetId}`);
 
-    // Get results from dataset (like your Make.com flow)
-    console.log(`📊 Fetching SERP results from dataset...`);
-    const serpResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
+    // Poll dataset until we have results (like your Make.com flow)
+    console.log(`⏳ Polling SERP dataset for results...`);
+    let serpData = null;
+    let attempts = 0;
+    const maxAttempts = 60; // Wait up to 5 minutes
 
-    if (!serpResultsResponse.ok) {
-      const errorText = await serpResultsResponse.text();
-      console.error(`❌ SERP Results Error: ${errorText}`);
-      throw new Error(`Failed to get SERP results: ${serpResultsResponse.status} ${serpResultsResponse.statusText}`);
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      attempts++;
+
+      console.log(`📊 Checking SERP dataset (attempt ${attempts}/${maxAttempts})...`);
+      const serpResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (!serpResultsResponse.ok) {
+        console.error(`❌ SERP Results Error: ${serpResultsResponse.status}`);
+        continue;
+      }
+
+      serpData = await serpResultsResponse.json();
+      console.log(`📊 SERP dataset has ${serpData.length} items`);
+
+      if (serpData && serpData.length > 0) {
+        console.log(`✅ SERP results received: ${serpData.length} items`);
+        break;
+      }
     }
 
-    const serpData = await serpResultsResponse.json();
-    console.log(`✅ SERP results received: ${serpData.length} items`);
+    if (!serpData || serpData.length === 0) {
+      throw new Error('SERP dataset is empty after 5 minutes of polling');
+    }
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
 
@@ -241,22 +259,40 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     const metricsDatasetId = metricsRunData.defaultDatasetId;
     console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
 
-    // Get results from dataset (like your Make.com flow)
-    console.log(`📊 Fetching Metrics results from dataset...`);
-    const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
+    // Poll dataset until we have results (like your Make.com flow)
+    console.log(`⏳ Polling Metrics dataset for results...`);
+    let metricsData = null;
+    let metricsAttempts = 0;
+    const maxMetricsAttempts = 60; // Wait up to 5 minutes
 
-    if (!metricsResultsResponse.ok) {
-      const errorText = await metricsResultsResponse.text();
-      console.error(`❌ Metrics Results Error: ${errorText}`);
-      throw new Error(`Failed to get Metrics results: ${metricsResultsResponse.status} ${metricsResultsResponse.statusText}`);
+    while (metricsAttempts < maxMetricsAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      metricsAttempts++;
+
+      console.log(`📊 Checking Metrics dataset (attempt ${metricsAttempts}/${maxMetricsAttempts})...`);
+      const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (!metricsResultsResponse.ok) {
+        console.error(`❌ Metrics Results Error: ${metricsResultsResponse.status}`);
+        continue;
+      }
+
+      metricsData = await metricsResultsResponse.json();
+      console.log(`📊 Metrics dataset has ${metricsData.length} items`);
+
+      if (metricsData && metricsData.length > 0) {
+        console.log(`✅ Metrics results received: ${metricsData.length} items`);
+        break;
+      }
     }
 
-    const metricsData = await metricsResultsResponse.json();
-    console.log(`✅ Metrics results received: ${metricsData.length} items`);
+    if (!metricsData || metricsData.length === 0) {
+      throw new Error('Metrics dataset is empty after 5 minutes of polling');
+    }
     console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
     console.log(`📊 Metrics data structure:`, Object.keys(metricsData));
     console.log(`📊 Metrics data sample:`, metricsData.slice(0, 2));
