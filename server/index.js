@@ -88,7 +88,25 @@ const callApifySerpApi = async (keyword, apiKey) => {
   console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
   
   try {
-    // Step 1: Get SERP results using scraperlink/google-search-results-serp-scraper (same as your Make.com)
+    // First, validate API key
+    console.log(`🔑 Validating API key...`);
+    const accountResponse = await fetch('https://api.apify.com/v2/users/me', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+    
+    if (!accountResponse.ok) {
+      const accountError = await accountResponse.text();
+      console.error(`❌ API key validation failed: ${accountResponse.status} - ${accountError}`);
+      throw new Error(`Invalid API key: ${accountResponse.status} ${accountResponse.statusText}`);
+    }
+    
+    const accountData = await accountResponse.json();
+    console.log(`✅ API key valid for user: ${accountData.username}`);
+    
+    // Step 1: Get SERP results synchronously
     console.log(`📡 Calling Apify SERP API for keyword: ${keyword}`);
     const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
@@ -103,16 +121,15 @@ const callApifySerpApi = async (keyword, apiKey) => {
 
     if (!serpResponse.ok) {
       const errorText = await serpResponse.text();
-      console.error(`❌ SERP API Error Response: ${errorText}`);
+      console.error(`❌ SERP API Error: ${errorText}`);
       console.error(`❌ SERP API Status: ${serpResponse.status} ${serpResponse.statusText}`);
-      console.error(`❌ SERP API Headers:`, Object.fromEntries(serpResponse.headers.entries()));
       throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText} - ${errorText}`);
     }
 
     const serpData = await serpResponse.json();
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
-    
+
     // Parse SERP data - matches your example structure exactly
     let serpResults = [];
     if (Array.isArray(serpData)) {
@@ -129,6 +146,8 @@ const callApifySerpApi = async (keyword, apiKey) => {
       console.error(`❌ Unexpected SERP data structure for ${keyword}:`, serpData);
       throw new Error('Unexpected SERP data structure received from Apify');
     }
+    console.log(`✅ SERP data received for: ${keyword}`);
+    console.log(`📊 SERP data structure:`, Object.keys(serpData));
     
     console.log(`📊 SERP results count:`, serpResults.length);
 
@@ -142,7 +161,7 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Get DA/PA metrics using scrap3r/moz-da-pa-metrics (same as your Make.com)
+    // Step 2: Get DA/PA metrics synchronously
     console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
     const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
       method: 'POST',
@@ -157,9 +176,8 @@ const callApifySerpApi = async (keyword, apiKey) => {
 
     if (!metricsResponse.ok) {
       const errorText = await metricsResponse.text();
-      console.error(`❌ Metrics API Error Response: ${errorText}`);
+      console.error(`❌ Metrics API Error: ${errorText}`);
       console.error(`❌ Metrics API Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
-      console.error(`❌ Metrics API Headers:`, Object.fromEntries(metricsResponse.headers.entries()));
       throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText} - ${errorText}`);
     }
 
