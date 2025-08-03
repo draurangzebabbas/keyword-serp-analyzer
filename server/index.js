@@ -90,9 +90,9 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
   console.log(`🔑 API key starts with: ${apiKey.substring(0, 10)}...`);
   
   try {
-    // Step 1: Start SERP actor run (like your Make.com flow)
-    console.log(`📡 Starting Apify SERP API for keyword: ${keyword}, country: ${country}, page: ${page}`);
-    const serpRunResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs', {
+    // Step 1: Run SERP actor synchronously (EXACTLY like your Make.com flow)
+    console.log(`📡 Running Apify SERP API for keyword: ${keyword}, country: ${country}, page: ${page}`);
+    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -105,21 +105,19 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       })
     });
 
-    console.log(`📊 SERP Run Response Status: ${serpRunResponse.status} ${serpRunResponse.statusText}`);
+    console.log(`📊 SERP Response Status: ${serpResponse.status} ${serpResponse.statusText}`);
 
-    if (!serpRunResponse.ok) {
-      const errorText = await serpRunResponse.text();
-      console.error(`❌ SERP API Start Error: ${errorText}`);
-      throw new Error(`SERP API failed to start: ${serpRunResponse.status} ${serpRunResponse.statusText}`);
+    if (!serpResponse.ok) {
+      const errorText = await serpResponse.text();
+      console.error(`❌ SERP API Error: ${errorText}`);
+      throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText}`);
     }
 
-    const serpRunData = await serpRunResponse.json();
-    const runId = serpRunData.data.id;
-    const datasetId = serpRunData.data.defaultDatasetId;
-    console.log(`📡 SERP run started with ID: ${runId}`);
+    const serpRunData = await serpResponse.json();
+    const datasetId = serpRunData.defaultDatasetId;
     console.log(`📊 SERP dataset ID: ${datasetId}`);
 
-    // Get results directly from dataset (like your Make.com flow)
+    // Get results from dataset (like your Make.com flow)
     console.log(`📊 Fetching SERP results from dataset...`);
     const serpResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items`, {
       headers: {
@@ -180,11 +178,11 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Start Metrics actor run (like your Make.com flow)
-    console.log(`📊 Starting Apify Metrics API for ${urls.length} URLs`);
+    // Step 2: Run Metrics actor synchronously (EXACTLY like your Make.com flow)
+    console.log(`📊 Running Apify Metrics API for ${urls.length} URLs`);
     console.log(`📊 URLs to analyze:`, urls.slice(0, 3)); // Show first 3 URLs
     
-    const metricsRunResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
+    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -195,21 +193,19 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       })
     });
 
-    console.log(`📊 Metrics Run Response Status: ${metricsRunResponse.status} ${metricsRunResponse.statusText}`);
+    console.log(`📊 Metrics Response Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
 
-    if (!metricsRunResponse.ok) {
-      const errorText = await metricsRunResponse.text();
-      console.error(`❌ Metrics API Start Error: ${errorText}`);
-      throw new Error(`Metrics API failed to start: ${metricsRunResponse.status} ${metricsRunResponse.statusText}`);
+    if (!metricsResponse.ok) {
+      const errorText = await metricsResponse.text();
+      console.error(`❌ Metrics API Error: ${errorText}`);
+      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
     }
 
-    const metricsRunData = await metricsRunResponse.json();
-    const metricsRunId = metricsRunData.data.id;
-    const metricsDatasetId = metricsRunData.data.defaultDatasetId;
-    console.log(`📊 Metrics run started with ID: ${metricsRunId}`);
+    const metricsRunData = await metricsResponse.json();
+    const metricsDatasetId = metricsRunData.defaultDatasetId;
     console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
 
-    // Get results directly from dataset (like your Make.com flow)
+    // Get results from dataset (like your Make.com flow)
     console.log(`📊 Fetching Metrics results from dataset...`);
     const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
       headers: {
