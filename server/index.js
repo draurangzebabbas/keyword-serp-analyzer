@@ -132,7 +132,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error(`Invalid JSON response from Apify SERP: ${parseError.message}`);
     }
 
-    const runId = serpRunData.id;
+    const runId = serpRunData.data?.id;
     console.log(`📊 SERP run ID: ${runId}`);
     console.log(`📊 Full SERP run data:`, JSON.stringify(serpRunData, null, 2));
 
@@ -321,7 +321,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error(`Invalid JSON response from Apify Metrics: ${parseError.message}`);
     }
 
-    const metricsRunId = metricsRunData.id;
+    const metricsRunId = metricsRunData.data?.id;
     console.log(`📊 Metrics run ID: ${metricsRunId}`);
     console.log(`📊 Full Metrics run data:`, JSON.stringify(metricsRunData, null, 2));
 
