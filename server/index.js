@@ -83,23 +83,21 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// Real Apify SERP API integration
+// Real Apify SERP API integration - matches your working Make.com flow exactly
 const callApifySerpApi = async (keyword, apiKey) => {
   console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
   
   try {
-    // Step 1: Get SERP results using the same actor as your working Make.com flow
+    // Step 1: Get SERP results using scraperlink/google-search-results-serp-scraper (same as your Make.com)
     console.log(`📡 Calling Apify SERP API for keyword: ${keyword}`);
-    const serpResponse = await fetch('https://api.apify.com/v2/acts/563JCPLOqM1kMmbbP/run-sync', {
+    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        "country": "US",
-        "keyword": keyword,
-        "page": 1
+        "keyword": keyword
       })
     });
 
@@ -115,36 +113,38 @@ const callApifySerpApi = async (keyword, apiKey) => {
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
     
-    // The response structure might be different - let's handle both possible formats
-    let results = [];
-    if (serpData.results && Array.isArray(serpData.results)) {
-      results = serpData.results;
-    } else if (serpData.data && Array.isArray(serpData.data)) {
-      results = serpData.data;
-    } else if (Array.isArray(serpData)) {
-      results = serpData;
+    // Parse SERP data - matches your example structure exactly
+    let serpResults = [];
+    if (Array.isArray(serpData)) {
+      // If it's an array, take the first item (like your example)
+      const firstItem = serpData[0];
+      if (firstItem && firstItem.results) {
+        serpResults = firstItem.results;
+        console.log(`📊 Found SERP results in array format`);
+      }
+    } else if (serpData.results && Array.isArray(serpData.results)) {
+      serpResults = serpData.results;
+      console.log(`📊 Found SERP results in object format`);
     } else {
       console.error(`❌ Unexpected SERP data structure for ${keyword}:`, serpData);
       throw new Error('Unexpected SERP data structure received from Apify');
     }
     
-    console.log(`📊 SERP results count:`, results.length);
+    console.log(`📊 SERP results count:`, serpResults.length);
 
-    // Extract URLs from SERP results (handle different possible field names)
-    const urls = results.map(result => {
-      return result.url || result.link || result.href || result.website;
-    }).filter(url => url); // Remove any undefined/null values
+    // Extract URLs from SERP results - matches your example structure
+    const urls = serpResults.map(result => result.url).filter(url => url);
     
     console.log(`📊 Found ${urls.length} URLs to analyze`);
     
     if (urls.length === 0) {
-      console.error(`❌ No URLs found in SERP results for ${keyword}:`, results);
+      console.error(`❌ No URLs found in SERP results for ${keyword}:`, serpResults);
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Get DA/PA metrics using the same actor as your working Make.com flow
+    // Step 2: Get DA/PA metrics using scrap3r/moz-da-pa-metrics (same as your Make.com)
     console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
-    const metricsResponse = await fetch('https://api.apify.com/v2/acts/1fNnRSV43DvkFqpvQ/run-sync', {
+    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -174,16 +174,15 @@ const callApifySerpApi = async (keyword, apiKey) => {
       throw new Error('Invalid metrics data structure received from Apify');
     }
 
-    // Step 3: Combine SERP results with metrics
-    const combinedResults = results.map((result, index) => {
-      const resultUrl = result.url || result.link || result.href || result.website;
-      const metrics = metricsData.find(m => m.domain === resultUrl) || {};
+    // Step 3: Combine SERP results with metrics - matches your example structure exactly
+    const combinedResults = serpResults.map((result, index) => {
+      const metrics = metricsData.find(m => m.domain === result.url) || {};
       
       return {
-        position: index + 1,
-        url: resultUrl,
-        title: result.title || result.name || result.headline || '',
-        description: result.description || result.snippet || result.summary || '',
+        position: result.position || index + 1,
+        url: result.url,
+        title: result.title,
+        description: result.description,
         domain_authority: metrics.domain_authority || 0,
         page_authority: metrics.page_authority || 0,
         spam_score: metrics.spam_score || 0
@@ -192,11 +191,23 @@ const callApifySerpApi = async (keyword, apiKey) => {
 
     console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
     
+    // Extract related keywords and knowledge panel from the first item if it's an array
+    let relatedKeywords = [];
+    let knowledgePanel = null;
+    
+    if (Array.isArray(serpData) && serpData[0]) {
+      relatedKeywords = serpData[0].related_keywords?.keywords || [];
+      knowledgePanel = serpData[0].knowledge_panel || null;
+    } else if (serpData.related_keywords) {
+      relatedKeywords = serpData.related_keywords.keywords || [];
+      knowledgePanel = serpData.knowledge_panel || null;
+    }
+    
     return {
       keyword: keyword,
       results: combinedResults,
-      serp_features: serpData.related_keywords?.keywords || serpData.related_keywords || [],
-      knowledge_panel: serpData.knowledge_panel || null
+      serp_features: relatedKeywords,
+      knowledge_panel: knowledgePanel
     };
 
   } catch (error) {
@@ -563,17 +574,15 @@ app.post('/api/test-apify', authMiddleware, async (req, res) => {
     
     console.log(`🧪 Testing Apify API key: ${apiKey.substring(0, 8)}...`);
     
-    // Test with a simple keyword using the same actor as your working flow
-    const testResponse = await fetch('https://api.apify.com/v2/acts/563JCPLOqM1kMmbbP/run-sync', {
+    // Test with a simple keyword using the same actor as your working Make.com flow
+    const testResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        "country": "US",
-        "keyword": "test",
-        "page": 1
+        "keyword": "test"
       })
     });
     
