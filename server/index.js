@@ -134,18 +134,25 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
     const datasetId = serpRunData.defaultDatasetId;
     console.log(`📊 SERP dataset ID: ${datasetId}`);
+    console.log(`📊 Full SERP run data:`, JSON.stringify(serpRunData, null, 2));
 
-    // Poll dataset until we have results (like your Make.com flow)
+    if (!datasetId) {
+      console.error(`❌ No dataset ID found in SERP response:`, serpRunData);
+      throw new Error('No dataset ID received from Apify SERP API');
+    }
+
+    // First wait 20 seconds for dataset to populate (like your Make.com)
+    console.log(`⏳ Initial wait for SERP dataset to populate...`);
+    await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 seconds
+
+    // Then poll dataset until we have results (hybrid approach)
     console.log(`⏳ Polling SERP dataset for results...`);
     let serpData = null;
     let attempts = 0;
     const maxAttempts = 60; // Wait up to 5 minutes
 
     while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-      attempts++;
-
-      console.log(`📊 Checking SERP dataset (attempt ${attempts}/${maxAttempts})...`);
+      console.log(`📊 Checking SERP dataset (attempt ${attempts + 1}/${maxAttempts})...`);
       const serpResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items`, {
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -154,16 +161,22 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
       if (!serpResultsResponse.ok) {
         console.error(`❌ SERP Results Error: ${serpResultsResponse.status}`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+        attempts++;
         continue;
       }
 
       serpData = await serpResultsResponse.json();
       console.log(`📊 SERP dataset has ${serpData.length} items`);
+      console.log(`📊 SERP dataset sample:`, serpData.slice(0, 1));
 
       if (serpData && serpData.length > 0) {
         console.log(`✅ SERP results received: ${serpData.length} items`);
         break;
       }
+
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      attempts++;
     }
 
     if (!serpData || serpData.length === 0) {
@@ -258,18 +271,25 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
     const metricsDatasetId = metricsRunData.defaultDatasetId;
     console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
+    console.log(`📊 Full Metrics run data:`, JSON.stringify(metricsRunData, null, 2));
 
-    // Poll dataset until we have results (like your Make.com flow)
+    if (!metricsDatasetId) {
+      console.error(`❌ No dataset ID found in Metrics response:`, metricsRunData);
+      throw new Error('No dataset ID received from Apify Metrics API');
+    }
+
+    // First wait 20 seconds for dataset to populate (like your Make.com)
+    console.log(`⏳ Initial wait for Metrics dataset to populate...`);
+    await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 seconds
+
+    // Then poll dataset until we have results (hybrid approach)
     console.log(`⏳ Polling Metrics dataset for results...`);
     let metricsData = null;
     let metricsAttempts = 0;
     const maxMetricsAttempts = 60; // Wait up to 5 minutes
 
     while (metricsAttempts < maxMetricsAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-      metricsAttempts++;
-
-      console.log(`📊 Checking Metrics dataset (attempt ${metricsAttempts}/${maxMetricsAttempts})...`);
+      console.log(`📊 Checking Metrics dataset (attempt ${metricsAttempts + 1}/${maxMetricsAttempts})...`);
       const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
         headers: {
           'Authorization': `Bearer ${apiKey}`
@@ -278,16 +298,22 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
       if (!metricsResultsResponse.ok) {
         console.error(`❌ Metrics Results Error: ${metricsResultsResponse.status}`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+        metricsAttempts++;
         continue;
       }
 
       metricsData = await metricsResultsResponse.json();
       console.log(`📊 Metrics dataset has ${metricsData.length} items`);
+      console.log(`📊 Metrics dataset sample:`, metricsData.slice(0, 1));
 
       if (metricsData && metricsData.length > 0) {
         console.log(`✅ Metrics results received: ${metricsData.length} items`);
         break;
       }
+
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      metricsAttempts++;
     }
 
     if (!metricsData || metricsData.length === 0) {
