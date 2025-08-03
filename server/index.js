@@ -163,13 +163,13 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       }
 
       const statusData = await statusResponse.json();
-      console.log(`📊 SERP run status: ${statusData.status} (attempt ${serpAttempts}/${maxSerpAttempts})`);
+      console.log(`📊 SERP run status: ${statusData.data?.status} (attempt ${serpAttempts}/${maxSerpAttempts})`);
 
-      if (statusData.status === 'SUCCEEDED') {
+      if (statusData.data?.status === 'SUCCEEDED') {
         console.log(`✅ SERP run completed successfully`);
         break;
-      } else if (statusData.status === 'FAILED') {
-        throw new Error(`SERP run failed: ${statusData.meta?.errorMessage || 'Unknown error'}`);
+      } else if (statusData.data?.status === 'FAILED') {
+        throw new Error(`SERP run failed: ${statusData.data?.meta?.errorMessage || 'Unknown error'}`);
       }
     }
 
@@ -185,7 +185,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     });
 
     const finalStatusData = await finalStatusResponse.json();
-    const datasetId = finalStatusData.defaultDatasetId;
+    const datasetId = finalStatusData.data?.defaultDatasetId;
     console.log(`📊 SERP dataset ID: ${datasetId}`);
 
     if (!datasetId) {
@@ -352,13 +352,13 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       }
 
       const metricsStatusData = await metricsStatusResponse.json();
-      console.log(`📊 Metrics run status: ${metricsStatusData.status} (attempt ${metricsRunAttempts}/${maxMetricsRunAttempts})`);
+      console.log(`📊 Metrics run status: ${metricsStatusData.data?.status} (attempt ${metricsRunAttempts}/${maxMetricsRunAttempts})`);
 
-      if (metricsStatusData.status === 'SUCCEEDED') {
+      if (metricsStatusData.data?.status === 'SUCCEEDED') {
         console.log(`✅ Metrics run completed successfully`);
         break;
-      } else if (metricsStatusData.status === 'FAILED') {
-        throw new Error(`Metrics run failed: ${metricsStatusData.meta?.errorMessage || 'Unknown error'}`);
+      } else if (metricsStatusData.data?.status === 'FAILED') {
+        throw new Error(`Metrics run failed: ${metricsStatusData.data?.meta?.errorMessage || 'Unknown error'}`);
       }
     }
 
@@ -374,7 +374,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     });
 
     const finalMetricsStatusData = await finalMetricsStatusResponse.json();
-    const metricsDatasetId = finalMetricsStatusData.defaultDatasetId;
+    const metricsDatasetId = finalMetricsStatusData.data?.defaultDatasetId;
     console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
 
     if (!metricsDatasetId) {
