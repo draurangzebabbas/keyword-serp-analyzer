@@ -90,9 +90,9 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
   console.log(`🔑 API key starts with: ${apiKey.substring(0, 10)}...`);
   
   try {
-    // Step 1: Get SERP results synchronously - EXACTLY like your Make.com flow
-    console.log(`📡 Calling Apify SERP API for keyword: ${keyword}, country: ${country}, page: ${page}`);
-    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
+    // Step 1: Start SERP actor run (like your Make.com flow)
+    console.log(`📡 Starting Apify SERP API for keyword: ${keyword}, country: ${country}, page: ${page}`);
+    const serpRunResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -105,32 +105,62 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       })
     });
 
-    console.log(`📊 SERP Response Status: ${serpResponse.status} ${serpResponse.statusText}`);
-    console.log(`📊 SERP Response Headers:`, Object.fromEntries(serpResponse.headers.entries()));
+    console.log(`📊 SERP Run Response Status: ${serpRunResponse.status} ${serpRunResponse.statusText}`);
 
-    if (!serpResponse.ok) {
-      const errorText = await serpResponse.text();
-      console.error(`❌ SERP API Error: ${errorText}`);
-      console.error(`❌ SERP API Status: ${serpResponse.status} ${serpResponse.statusText}`);
-      throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText} - ${errorText}`);
+    if (!serpRunResponse.ok) {
+      const errorText = await serpRunResponse.text();
+      console.error(`❌ SERP API Start Error: ${errorText}`);
+      throw new Error(`SERP API failed to start: ${serpRunResponse.status} ${serpRunResponse.statusText}`);
     }
 
-    // Get raw response text first
-    const responseText = await serpResponse.text();
-    console.log(`📊 Raw SERP response length: ${responseText.length}`);
-    console.log(`📊 Raw SERP response: ${responseText.substring(0, 1000)}...`);
-    
-    if (!responseText || responseText.trim() === '') {
-      throw new Error('Empty response from Apify SERP API');
+    const serpRunData = await serpRunResponse.json();
+    const runId = serpRunData.data.id;
+    console.log(`📡 SERP run started with ID: ${runId}`);
+
+    // Wait for SERP run to complete
+    console.log(`⏳ Waiting for SERP run to complete...`);
+    let serpData = null;
+    let attempts = 0;
+    const maxAttempts = 60; // Wait up to 5 minutes
+
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      attempts++;
+
+      const statusResponse = await fetch(`https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs/${runId}`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (!statusResponse.ok) {
+        console.error(`❌ Status check failed: ${statusResponse.status}`);
+        continue;
+      }
+
+      const statusData = await statusResponse.json();
+      console.log(`📊 SERP run status: ${statusData.data.status} (attempt ${attempts}/${maxAttempts})`);
+
+      if (statusData.data.status === 'SUCCEEDED') {
+        // Get the results from dataset
+        const resultsResponse = await fetch(`https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs/${runId}/dataset/items`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
+          }
+        });
+
+        if (resultsResponse.ok) {
+          serpData = await resultsResponse.json();
+          console.log(`✅ SERP results received`);
+          break;
+        }
+      } else if (statusData.data.status === 'FAILED' || statusData.data.status === 'ABORTED') {
+        throw new Error(`SERP run failed with status: ${statusData.data.status}`);
+      }
     }
 
-    let serpData;
-    try {
-      serpData = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error(`❌ JSON parse error: ${parseError.message}`);
-      console.error(`❌ Response text: ${responseText}`);
-      throw new Error(`Invalid JSON response from Apify: ${parseError.message}`);
+    if (!serpData) {
+      throw new Error('SERP run timed out after 5 minutes');
     }
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
@@ -177,11 +207,11 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Get DA/PA metrics synchronously - EXACTLY like your Make.com flow
-    console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
+    // Step 2: Start Metrics actor run (like your Make.com flow)
+    console.log(`📊 Starting Apify Metrics API for ${urls.length} URLs`);
     console.log(`📊 URLs to analyze:`, urls.slice(0, 3)); // Show first 3 URLs
     
-    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
+    const metricsRunResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -192,32 +222,62 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       })
     });
 
-    console.log(`📊 Metrics Response Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
-    console.log(`📊 Metrics Response Headers:`, Object.fromEntries(metricsResponse.headers.entries()));
+    console.log(`📊 Metrics Run Response Status: ${metricsRunResponse.status} ${metricsRunResponse.statusText}`);
 
-    if (!metricsResponse.ok) {
-      const errorText = await metricsResponse.text();
-      console.error(`❌ Metrics API Error: ${errorText}`);
-      console.error(`❌ Metrics API Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
-      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText} - ${errorText}`);
+    if (!metricsRunResponse.ok) {
+      const errorText = await metricsRunResponse.text();
+      console.error(`❌ Metrics API Start Error: ${errorText}`);
+      throw new Error(`Metrics API failed to start: ${metricsRunResponse.status} ${metricsRunResponse.statusText}`);
     }
 
-    // Get raw response text first
-    const metricsResponseText = await metricsResponse.text();
-    console.log(`📊 Raw Metrics response length: ${metricsResponseText.length}`);
-    console.log(`📊 Raw Metrics response: ${metricsResponseText.substring(0, 1000)}...`);
-    
-    if (!metricsResponseText || metricsResponseText.trim() === '') {
-      throw new Error('Empty response from Apify Metrics API');
+    const metricsRunData = await metricsRunResponse.json();
+    const metricsRunId = metricsRunData.data.id;
+    console.log(`📊 Metrics run started with ID: ${metricsRunId}`);
+
+    // Wait for Metrics run to complete
+    console.log(`⏳ Waiting for Metrics run to complete...`);
+    let metricsData = null;
+    let metricsAttempts = 0;
+    const maxMetricsAttempts = 60; // Wait up to 5 minutes
+
+    while (metricsAttempts < maxMetricsAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      metricsAttempts++;
+
+      const metricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (!metricsStatusResponse.ok) {
+        console.error(`❌ Metrics status check failed: ${metricsStatusResponse.status}`);
+        continue;
+      }
+
+      const metricsStatusData = await metricsStatusResponse.json();
+      console.log(`📊 Metrics run status: ${metricsStatusData.data.status} (attempt ${metricsAttempts}/${maxMetricsAttempts})`);
+
+      if (metricsStatusData.data.status === 'SUCCEEDED') {
+        // Get the results from dataset
+        const metricsResultsResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}/dataset/items`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
+          }
+        });
+
+        if (metricsResultsResponse.ok) {
+          metricsData = await metricsResultsResponse.json();
+          console.log(`✅ Metrics results received`);
+          break;
+        }
+      } else if (metricsStatusData.data.status === 'FAILED' || metricsStatusData.data.status === 'ABORTED') {
+        throw new Error(`Metrics run failed with status: ${metricsStatusData.data.status}`);
+      }
     }
 
-    let metricsData;
-    try {
-      metricsData = JSON.parse(metricsResponseText);
-    } catch (parseError) {
-      console.error(`❌ Metrics JSON parse error: ${parseError.message}`);
-      console.error(`❌ Metrics response text: ${metricsResponseText}`);
-      throw new Error(`Invalid JSON response from Apify Metrics: ${parseError.message}`);
+    if (!metricsData) {
+      throw new Error('Metrics run timed out after 5 minutes');
     }
     console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
     console.log(`📊 Metrics data structure:`, Object.keys(metricsData));
