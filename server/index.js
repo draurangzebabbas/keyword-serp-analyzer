@@ -83,32 +83,88 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// Mock function to simulate Apify SERP API call
+// Real Apify SERP API integration
 const callApifySerpApi = async (keyword, apiKey) => {
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+  console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
   
-  // Simulate random success/failure
-  if (Math.random() < 0.1) { // 10% failure rate
-    throw new Error('API key rate limited or invalid');
+  try {
+    // Step 1: Get SERP results using scraperlink/google-search-results-serp-scraper
+    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        "keyword": keyword,
+        "num": 10, // Get top 10 results
+        "country": "us",
+        "language": "en"
+      })
+    });
+
+    if (!serpResponse.ok) {
+      throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText}`);
+    }
+
+    const serpData = await serpResponse.json();
+    console.log(`✅ SERP data received for: ${keyword}`);
+
+    // Extract URLs from SERP results
+    const urls = serpData.results?.map(result => result.url) || [];
+    console.log(`📊 Found ${urls.length} URLs to analyze`);
+
+    if (urls.length === 0) {
+      throw new Error('No URLs found in SERP results');
+    }
+
+    // Step 2: Get DA/PA metrics using scrap3r/moz-da-pa-metrics
+    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        "url": urls
+      })
+    });
+
+    if (!metricsResponse.ok) {
+      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
+    }
+
+    const metricsData = await metricsResponse.json();
+    console.log(`✅ Metrics data received for ${metricsData.length} URLs`);
+
+    // Step 3: Combine SERP results with metrics
+    const combinedResults = serpData.results?.map((result, index) => {
+      const metrics = metricsData.find(m => m.domain === result.url) || {};
+      
+      return {
+        position: result.position,
+        url: result.url,
+        title: result.title,
+        description: result.description,
+        domain_authority: metrics.domain_authority || 0,
+        page_authority: metrics.page_authority || 0,
+        spam_score: metrics.spam_score || 0
+      };
+    }) || [];
+
+    console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
+    
+    return {
+      keyword: keyword,
+      results: combinedResults,
+      serp_features: serpData.related_keywords?.keywords || [],
+      knowledge_panel: serpData.knowledge_panel || null
+    };
+
+  } catch (error) {
+    console.error(`❌ Apify API error for ${keyword}:`, error.message);
+    throw error;
   }
-
-  // Mock SERP results
-  const mockDomains = [
-    'wikipedia.org', 'amazon.com', 'reddit.com', 'youtube.com', 'medium.com',
-    'linkedin.com', 'twitter.com', 'facebook.com', 'instagram.com', 'tiktok.com'
-  ];
-
-  return {
-    results: mockDomains.slice(0, 10).map((domain, index) => ({
-      domain,
-      url: `https://${domain}/search?q=${encodeURIComponent(keyword)}`,
-      position: index + 1,
-      title: `${keyword} - Results from ${domain}`,
-      da: Math.floor(Math.random() * 100) + 1, // Mock Domain Authority
-      pa: Math.floor(Math.random() * 100) + 1, // Mock Page Authority
-    }))
-  };
 };
 
 // Main SERP analysis endpoint
@@ -179,8 +235,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
           const serpResult = await callApifySerpApi(keyword, currentKey.api_key);
           
           // Calculate analysis metrics
-          const domains = serpResult.results.map(r => r.domain);
-          const das = serpResult.results.map(r => r.da);
+          const domains = serpResult.results.map(r => r.url); // Use URL as domain for DA/PA
+          const das = serpResult.results.map(r => r.domain_authority);
           const averageDA = das.reduce((sum, da) => sum + da, 0) / das.length;
           const lowDACount = das.filter(da => da < 35).length;
           const decision = averageDA < 50 && lowDACount >= 5 ? 'Write' : 'Skip';
@@ -191,7 +247,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
             average_da: Math.round(averageDA),
             low_da_count: lowDACount,
             decision,
-            serp_features: ['Featured Snippet', 'People Also Ask', 'Related Searches'].slice(0, Math.floor(Math.random() * 3) + 1)
+            serp_features: serpResult.serp_features?.slice(0, 3) || [],
+            full_results: serpResult.results // Include full SERP data
           });
 
           // Update key usage
@@ -206,14 +263,26 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
         } catch (error) {
           console.error(`Error with API key ${currentKey.id}:`, error.message);
           
-          // Mark key as failed temporarily
-          await supabase.from('api_keys').update({
-            status: 'rate_limited',
-            last_failed: new Date().toISOString(),
-            failure_count: currentKey.failure_count + 1
-          }).eq('id', currentKey.id);
+          // Check if it's a rate limit or credit issue
+          const isRateLimit = error.message.includes('rate') || error.message.includes('credit') || error.message.includes('429');
+          
+          if (isRateLimit) {
+            // Mark key as rate limited
+            await supabase.from('api_keys').update({
+              status: 'rate_limited',
+              last_failed: new Date().toISOString(),
+              failure_count: currentKey.failure_count + 1
+            }).eq('id', currentKey.id);
+          } else {
+            // Mark key as failed
+            await supabase.from('api_keys').update({
+              status: 'failed',
+              last_failed: new Date().toISOString(),
+              failure_count: currentKey.failure_count + 1
+            }).eq('id', currentKey.id);
+          }
 
-          attempts++;
+                    attempts++;
           currentKeyIndex++;
         }
       }
@@ -242,7 +311,15 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       request_id: requestId,
       keywords_processed: keywords.length,
       processing_time: processingTime,
-      results: results
+      results: results.map(result => ({
+        keyword: result.keyword,
+        domains: result.domains,
+        average_da: result.average_da,
+        low_da_count: result.low_da_count,
+        decision: result.decision,
+        serp_features: result.serp_features,
+        full_results: result.full_results // Complete SERP data with DA/PA metrics
+      }))
     });
 
   } catch (error) {
@@ -279,7 +356,7 @@ app.get('/api/test', (req, res) => {
   const baseUrl = process.env.VITE_API_BASE_URL || `http://localhost:${PORT}`;
   const webhookUrl = baseUrl.includes('localhost') 
     ? `http://localhost:${PORT}/api/analyze-serps`
-    : baseUrl;
+    : `${baseUrl}/api/analyze-serps`;
     
   res.json({ 
     message: 'SERP Analyzer API is running',
@@ -293,10 +370,11 @@ app.get('/api/test', (req, res) => {
 app.listen(PORT, () => {
   const baseUrl = process.env.VITE_API_BASE_URL || `http://localhost:${PORT}`;
   const isProduction = baseUrl.includes('onrender.com');
+  const webhookUrl = isProduction ? `${baseUrl}/api/analyze-serps` : `http://localhost:${PORT}/api/analyze-serps`;
   
   console.log(`🚀 SERP Analysis API server running on port ${PORT}`);
-  console.log(`📡 Health check: ${baseUrl.replace('/api/analyze-serps', '/api/health')}`);
-  console.log(`🔗 Webhook URL: ${baseUrl}`);
+  console.log(`📡 Health check: ${baseUrl}/api/health`);
+  console.log(`🔗 Webhook URL: ${webhookUrl}`);
   console.log(`✅ Supabase connected: ${!!supabaseUrl}`);
   console.log(`🌍 Environment: ${isProduction ? 'Production' : 'Development'}`);
 });
