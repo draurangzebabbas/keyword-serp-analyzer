@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: keyword-serp-analyzer-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server/index.js
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: VITE_API_BASE_URL
+        value: https://keyword-serp-analyzer-backend.onrender.com/api/analyze-serps 
