@@ -106,6 +106,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     });
 
     console.log(`📊 SERP Response Status: ${serpResponse.status} ${serpResponse.statusText}`);
+    console.log(`📊 SERP Response Headers:`, Object.fromEntries(serpResponse.headers.entries()));
 
     if (!serpResponse.ok) {
       const errorText = await serpResponse.text();
@@ -113,7 +114,24 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText}`);
     }
 
-    const serpRunData = await serpResponse.json();
+    // Get raw response text first
+    const serpResponseText = await serpResponse.text();
+    console.log(`📊 Raw SERP response length: ${serpResponseText.length}`);
+    console.log(`📊 Raw SERP response: ${serpResponseText.substring(0, 1000)}...`);
+    
+    if (!serpResponseText || serpResponseText.trim() === '') {
+      throw new Error('Empty response from Apify SERP API');
+    }
+
+    let serpRunData;
+    try {
+      serpRunData = JSON.parse(serpResponseText);
+    } catch (parseError) {
+      console.error(`❌ SERP JSON parse error: ${parseError.message}`);
+      console.error(`❌ SERP response text: ${serpResponseText}`);
+      throw new Error(`Invalid JSON response from Apify SERP: ${parseError.message}`);
+    }
+
     const datasetId = serpRunData.defaultDatasetId;
     console.log(`📊 SERP dataset ID: ${datasetId}`);
 
@@ -194,6 +212,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
     });
 
     console.log(`📊 Metrics Response Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
+    console.log(`📊 Metrics Response Headers:`, Object.fromEntries(metricsResponse.headers.entries()));
 
     if (!metricsResponse.ok) {
       const errorText = await metricsResponse.text();
@@ -201,7 +220,24 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
     }
 
-    const metricsRunData = await metricsResponse.json();
+    // Get raw response text first
+    const metricsResponseText = await metricsResponse.text();
+    console.log(`📊 Raw Metrics response length: ${metricsResponseText.length}`);
+    console.log(`📊 Raw Metrics response: ${metricsResponseText.substring(0, 1000)}...`);
+    
+    if (!metricsResponseText || metricsResponseText.trim() === '') {
+      throw new Error('Empty response from Apify Metrics API');
+    }
+
+    let metricsRunData;
+    try {
+      metricsRunData = JSON.parse(metricsResponseText);
+    } catch (parseError) {
+      console.error(`❌ Metrics JSON parse error: ${parseError.message}`);
+      console.error(`❌ Metrics response text: ${metricsResponseText}`);
+      throw new Error(`Invalid JSON response from Apify Metrics: ${parseError.message}`);
+    }
+
     const metricsDatasetId = metricsRunData.defaultDatasetId;
     console.log(`📊 Metrics dataset ID: ${metricsDatasetId}`);
 
