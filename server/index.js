@@ -88,50 +88,67 @@ const callApifySerpApi = async (keyword, apiKey) => {
   console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
   
   try {
-    // Step 1: Get SERP results using scraperlink/google-search-results-serp-scraper
+    // Step 1: Get SERP results using the same actor as your working Make.com flow
     console.log(`📡 Calling Apify SERP API for keyword: ${keyword}`);
-    const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
+    const serpResponse = await fetch('https://api.apify.com/v2/acts/563JCPLOqM1kMmbbP/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
+        "country": "US",
         "keyword": keyword,
-        "num": 10, // Get top 10 results
-        "country": "us",
-        "language": "en"
+        "page": 1
       })
     });
 
     if (!serpResponse.ok) {
       const errorText = await serpResponse.text();
       console.error(`❌ SERP API Error Response: ${errorText}`);
+      console.error(`❌ SERP API Status: ${serpResponse.status} ${serpResponse.statusText}`);
+      console.error(`❌ SERP API Headers:`, Object.fromEntries(serpResponse.headers.entries()));
       throw new Error(`SERP API failed: ${serpResponse.status} ${serpResponse.statusText} - ${errorText}`);
     }
 
     const serpData = await serpResponse.json();
     console.log(`✅ SERP data received for: ${keyword}`);
     console.log(`📊 SERP data structure:`, Object.keys(serpData));
-    console.log(`📊 SERP results count:`, serpData.results?.length || 0);
+    
+    // The response structure might be different - let's handle both possible formats
+    let results = [];
+    if (serpData.results && Array.isArray(serpData.results)) {
+      results = serpData.results;
+    } else if (serpData.data && Array.isArray(serpData.data)) {
+      results = serpData.data;
+    } else if (Array.isArray(serpData)) {
+      results = serpData;
+    } else {
+      console.error(`❌ Unexpected SERP data structure for ${keyword}:`, serpData);
+      throw new Error('Unexpected SERP data structure received from Apify');
+    }
+    
+    console.log(`📊 SERP results count:`, results.length);
 
-    // Extract URLs from SERP results
-    const urls = serpData.results?.map(result => result.url) || [];
+    // Extract URLs from SERP results (handle different possible field names)
+    const urls = results.map(result => {
+      return result.url || result.link || result.href || result.website;
+    }).filter(url => url); // Remove any undefined/null values
+    
     console.log(`📊 Found ${urls.length} URLs to analyze`);
     
-    // Validate SERP data structure
-    if (!serpData.results || !Array.isArray(serpData.results)) {
-      console.error(`❌ Invalid SERP data structure for ${keyword}:`, serpData);
-      throw new Error('Invalid SERP data structure received from Apify');
+    if (urls.length === 0) {
+      console.error(`❌ No URLs found in SERP results for ${keyword}:`, results);
+      throw new Error('No URLs found in SERP results');
     }
 
     if (urls.length === 0) {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Get DA/PA metrics using scrap3r/moz-da-pa-metrics
+    // Step 2: Get DA/PA metrics using the same actor as your working Make.com flow
     console.log(`📊 Calling Apify Metrics API for ${urls.length} URLs`);
-    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/run-sync', {
+    const metricsResponse = await fetch('https://api.apify.com/v2/acts/1fNnRSV43DvkFqpvQ/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -145,6 +162,8 @@ const callApifySerpApi = async (keyword, apiKey) => {
     if (!metricsResponse.ok) {
       const errorText = await metricsResponse.text();
       console.error(`❌ Metrics API Error Response: ${errorText}`);
+      console.error(`❌ Metrics API Status: ${metricsResponse.status} ${metricsResponse.statusText}`);
+      console.error(`❌ Metrics API Headers:`, Object.fromEntries(metricsResponse.headers.entries()));
       throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText} - ${errorText}`);
     }
 
@@ -160,26 +179,27 @@ const callApifySerpApi = async (keyword, apiKey) => {
     }
 
     // Step 3: Combine SERP results with metrics
-    const combinedResults = serpData.results?.map((result, index) => {
-      const metrics = metricsData.find(m => m.domain === result.url) || {};
+    const combinedResults = results.map((result, index) => {
+      const resultUrl = result.url || result.link || result.href || result.website;
+      const metrics = metricsData.find(m => m.domain === resultUrl) || {};
       
       return {
-        position: result.position,
-        url: result.url,
-        title: result.title,
-        description: result.description,
+        position: index + 1,
+        url: resultUrl,
+        title: result.title || result.name || result.headline || '',
+        description: result.description || result.snippet || result.summary || '',
         domain_authority: metrics.domain_authority || 0,
         page_authority: metrics.page_authority || 0,
         spam_score: metrics.spam_score || 0
       };
-    }) || [];
+    });
 
     console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
     
     return {
       keyword: keyword,
       results: combinedResults,
-      serp_features: serpData.related_keywords?.keywords || [],
+      serp_features: serpData.related_keywords?.keywords || serpData.related_keywords || [],
       knowledge_panel: serpData.knowledge_panel || null
     };
 
@@ -519,16 +539,17 @@ app.post('/api/test-apify', authMiddleware, async (req, res) => {
     
     console.log(`🧪 Testing Apify API key: ${apiKey.substring(0, 8)}...`);
     
-    // Test with a simple keyword
-    const testResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/run-sync', {
+    // Test with a simple keyword using the same actor as your working flow
+    const testResponse = await fetch('https://api.apify.com/v2/acts/563JCPLOqM1kMmbbP/run-sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
+        "country": "US",
         "keyword": "test",
-        "num": 1
+        "page": 1
       })
     });
     
