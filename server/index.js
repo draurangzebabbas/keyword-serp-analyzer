@@ -1,4 +1,3 @@
-//Flatt output for mapping
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -566,7 +565,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
             average_da: Math.round(averageDA),
             low_da_count: lowDACount,
             decision,
-            serp_features: serpResult.serp_features?.slice(0, 3) || [],
+            serp_features: serpResult.serp_features || [],
             full_results: serpResult.results // Include full SERP data with DA/PA
           };
           
@@ -667,7 +666,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
 
       // Format related keywords as readable text
       const relatedKeywordsText = result.serp_features.map(item => 
-        `Position ${item.position}: ${item.keyword}`
+        item.keyword
       ).join('\n');
 
       // Format domains as readable text
