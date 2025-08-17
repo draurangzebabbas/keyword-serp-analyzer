@@ -84,10 +84,14 @@ const authMiddleware = async (req, res, next) => {
 };
 
 // Real Apify SERP API integration with parallel processing
-const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
-  console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
-  
-  try {
+  const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
+    if (!apiKey) {
+      throw new Error('API key is required but not provided');
+    }
+    
+    console.log(`🔍 Analyzing keyword: ${keyword} with API key: ${apiKey.substring(0, 8)}...`);
+    
+    try {
     // Step 1: Start SERP actor asynchronously
     console.log(`📡 Starting Apify SERP API for keyword: ${keyword}`);
     const serpResponse = await fetch('https://api.apify.com/v2/acts/scraperlink~google-search-results-serp-scraper/runs', {
@@ -378,7 +382,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       console.log(`🔍 Getting SERP data for: ${keyword} with API key: ${currentKey.key_name}`);
       
       try {
-        const serpResult = await callApifySerpApi(keyword, currentKey.key_value, country, page);
+        const serpResult = await callApifySerpApi(keyword, currentKey.api_key, country, page);
         
         // Reactivate the key on success
         try {
@@ -471,7 +475,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       
       try {
         // Use the first available API key for Moz analysis
-        const mozApiKey = sortedApiKeys.find(key => key.status === 'active')?.key_value;
+        const mozApiKey = sortedApiKeys.find(key => key.status === 'active')?.api_key;
         if (!mozApiKey) {
           throw new Error('No active API key available for Moz analysis');
         }
@@ -637,7 +641,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       const { error: updateError } = await supabase.from('analysis_logs').update({
         status: 'completed',
         results: results,
-        api_keys_used: sortedApiKeys.map(key => ({ key_name: key.key_name, key_value: key.key_value })),
+        api_keys_used: sortedApiKeys.map(key => ({ key_name: key.key_name, api_key: key.api_key })),
         processing_time: processingTime
       }).eq('request_id', requestId);
 
