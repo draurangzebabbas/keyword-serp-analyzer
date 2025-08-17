@@ -449,7 +449,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       };
     });
     
-        console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
+    console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
     console.log(`📊 Sample combined result:`, combinedResults[0]);
     
     // Extract related keywords and knowledge panel from the first item if it's an array
@@ -464,6 +464,7 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
 
   } catch (error) {
     console.error(`❌ Apify API error for ${keyword}:`, error.message);
+    console.error(`❌ Full error stack:`, error.stack);
     
     // Provide more specific error messages
     if (error.message.includes('401')) {
@@ -484,9 +485,14 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
   const requestId = uuidv4();
   
   try {
+    console.log(`🚀 Starting SERP analysis request: ${requestId}`);
+    console.log(`👤 User: ${req.user.id} (${req.user.email})`);
+    console.log(`📝 Request body:`, JSON.stringify(req.body, null, 2));
+    
     const { keywords, country = "US", page = 1 } = req.body;
     
     if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
+      console.log(`❌ Invalid request: keywords array is empty or missing`);
       return res.status(400).json({ 
         error: 'Invalid request', 
         message: 'Keywords array is required and must not be empty' 
@@ -494,19 +500,32 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     }
 
     if (keywords.length > 30) {
+      console.log(`❌ Too many keywords: ${keywords.length} (max 30)`);
       return res.status(400).json({ 
         error: 'Too many keywords', 
         message: 'Maximum 30 keywords allowed per request' 
       });
     }
 
+    console.log(`📊 Processing ${keywords.length} keywords:`, keywords);
+
     // Log the request
-    await supabase.from('analysis_logs').insert({
-      user_id: req.user.id,
-      request_id: requestId,
-      keywords: keywords,
-      status: 'pending'
-    });
+    try {
+      const { error: logError } = await supabase.from('analysis_logs').insert({
+        user_id: req.user.id,
+        request_id: requestId,
+        keywords: keywords,
+        status: 'pending'
+      });
+
+      if (logError) {
+        console.error(`❌ Failed to log request:`, logError);
+      } else {
+        console.log(`✅ Request logged successfully`);
+      }
+    } catch (logError) {
+      console.error(`❌ Error logging request:`, logError);
+    }
 
     // Get user's API keys - include failed keys that can be retried
     const { data: apiKeys, error: keysError } = await supabase
@@ -516,7 +535,22 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       .in('status', ['active', 'failed', 'rate_limited'])
       .order('last_used', { ascending: true, nullsFirst: true });
 
-    if (keysError || !apiKeys || apiKeys.length === 0) {
+    if (keysError) {
+      console.error(`❌ Error fetching API keys:`, keysError);
+      await supabase.from('analysis_logs').update({
+        status: 'failed',
+        error_message: `Database error: ${keysError.message}`,
+        processing_time: Date.now() - startTime
+      }).eq('request_id', requestId);
+
+      return res.status(500).json({ 
+        error: 'Database error', 
+        message: 'Failed to fetch API keys' 
+      });
+    }
+
+    if (!apiKeys || apiKeys.length === 0) {
+      console.log(`❌ No API keys found for user ${req.user.id}`);
       await supabase.from('analysis_logs').update({
         status: 'failed',
         error_message: 'No API keys available',
@@ -532,7 +566,6 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     console.log(`🔑 Found ${apiKeys.length} API keys for user ${req.user.id}`);
     apiKeys.forEach((key, index) => {
       console.log(`  ${index + 1}. ${key.key_name} - Status: ${key.status} - Last used: ${key.last_used || 'Never'}`);
-      console.log(`     Key name: "${key.key_name}" (length: ${key.key_name?.length || 0})`);
     });
 
     const results = [];
@@ -541,12 +574,14 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
 
     // Process each keyword
     for (const keyword of keywords) {
+      console.log(`🔍 Processing keyword: ${keyword}`);
       let success = false;
       let attempts = 0;
       const maxAttempts = Math.min(3, apiKeys.length);
 
       while (!success && attempts < maxAttempts) {
         const currentKey = apiKeys[currentKeyIndex % apiKeys.length];
+        console.log(`🔑 Attempt ${attempts + 1}/${maxAttempts} with API key: ${currentKey.key_name}`);
         
         try {
           const serpResult = await callApifySerpApi(keyword, currentKey.api_key, country, page);
@@ -558,22 +593,33 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
           const lowDACount = das.filter(da => da < 35).length;
           const decision = averageDA < 50 && lowDACount >= 5 ? 'Write' : 'Skip';
 
+          // Create detailed result with all required fields
           const result = {
             keyword,
-            api_key_used: currentKey.key_name, // Add the API key name used
+            api_key_used: currentKey.key_name,
             domains: domains.slice(0, 5), // Top 5 domains
             average_da: Math.round(averageDA),
             low_da_count: lowDACount,
             decision,
             serp_features: serpResult.serp_features || [],
-            full_results: serpResult.results // Include full SERP data with DA/PA
+            full_results: serpResult.results, // Include full SERP data with DA/PA
+            // Store detailed data for each result
+            detailed_results: serpResult.results.map(r => ({
+              domain: r.url,
+              da: r.domain_authority || 0,
+              spam_score: r.spam_score || 0,
+              position: r.position,
+              title: r.title,
+              description: r.description
+            }))
           };
           
           console.log(`✅ Created result for ${keyword}:`, {
             keyword: result.keyword,
             api_key_used: result.api_key_used,
             decision: result.decision,
-            average_da: result.average_da
+            average_da: result.average_da,
+            results_count: result.full_results.length
           });
           
           results.push(result);
@@ -634,7 +680,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
           keyword,
           api_key_used: null, // No API key was successfully used
           error: 'All API keys failed or rate limited',
-          decision: 'Error'
+          decision: 'Error',
+          detailed_results: []
         };
         
         console.log(`❌ Adding error result for ${keyword}:`, errorResult);
@@ -643,18 +690,74 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     }
 
     const processingTime = Date.now() - startTime;
+    console.log(`⏱️ Total processing time: ${processingTime}ms`);
 
     // Update the log with results
-    await supabase.from('analysis_logs').update({
-      status: 'completed',
-      results: results,
-      api_keys_used: usedKeys,
-      processing_time: processingTime
-    }).eq('request_id', requestId);
+    try {
+      const { error: updateError } = await supabase.from('analysis_logs').update({
+        status: 'completed',
+        results: results,
+        api_keys_used: usedKeys,
+        processing_time: processingTime
+      }).eq('request_id', requestId);
+
+      if (updateError) {
+        console.error(`❌ Failed to update analysis log:`, updateError);
+      } else {
+        console.log(`✅ Analysis log updated successfully`);
+      }
+
+      // Store detailed SERP results in the new table
+      try {
+        const { data: analysisLog } = await supabase
+          .from('analysis_logs')
+          .select('id')
+          .eq('request_id', requestId)
+          .single();
+
+        if (analysisLog) {
+          const serpResultsToInsert = [];
+          
+          results.forEach(result => {
+            if (result.detailed_results && Array.isArray(result.detailed_results)) {
+              result.detailed_results.forEach(detail => {
+                serpResultsToInsert.push({
+                  analysis_log_id: analysisLog.id,
+                  keyword: result.keyword,
+                  domain: detail.domain,
+                  da: detail.da,
+                  spam_score: detail.spam_score,
+                  position: detail.position,
+                  title: detail.title,
+                  description: detail.description,
+                  url: detail.url
+                });
+              });
+            }
+          });
+
+          if (serpResultsToInsert.length > 0) {
+            const { error: serpError } = await supabase
+              .from('serp_results')
+              .insert(serpResultsToInsert);
+
+            if (serpError) {
+              console.error(`❌ Failed to store detailed SERP results:`, serpError);
+            } else {
+              console.log(`✅ Stored ${serpResultsToInsert.length} detailed SERP results`);
+            }
+          }
+        }
+      } catch (serpError) {
+        console.error(`❌ Error storing detailed SERP results:`, serpError);
+      }
+    } catch (updateError) {
+      console.error(`❌ Error updating analysis log:`, updateError);
+    }
 
     const finalResults = results.map(result => {
       // Format SERP results as readable text
-      const serpResultsText = result.full_results.map(item => 
+      const serpResultsText = result.full_results?.map(item => 
         `Position: ${item.position}\n` +
         `Title: ${item.title}\n` +
         `Description: ${item.description}\n` +
@@ -662,35 +765,38 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
         `DA: ${item.domain_authority}\n` +
         `PA: ${item.page_authority}\n` +
         `Spam Score: ${item.spam_score}\n`
-      ).join('\n');
+      ).join('\n') || '';
 
       // Format related keywords as readable text
-      const relatedKeywordsText = result.serp_features.map(item => 
+      const relatedKeywordsText = result.serp_features?.map(item => 
         item.keyword
-      ).join('\n');
+      ).join('\n') || '';
 
       // Format domains as readable text
-      const domainsText = result.domains.join('\n');
+      const domainsText = result.domains?.join('\n') || '';
 
       return {
         keyword: result.keyword,
         api_key_used: result.api_key_used,
-        domains: result.domains,
+        domains: result.domains || [],
         domains_text: domainsText, // Formatted domains
-        average_da: result.average_da,
-        low_da_count: result.low_da_count,
-        decision: result.decision,
-        serp_features: result.serp_features,
+        average_da: result.average_da || 0,
+        low_da_count: result.low_da_count || 0,
+        decision: result.decision || 'Error',
+        serp_features: result.serp_features || [],
         related_keywords_text: relatedKeywordsText, // Formatted related keywords
-        full_results: result.full_results,
-        serp_results_text: serpResultsText // Formatted SERP results
+        full_results: result.full_results || [],
+        serp_results_text: serpResultsText, // Formatted SERP results
+        detailed_results: result.detailed_results || [], // Detailed results with domain, da, spam_score
+        error: result.error || null
       };
     });
     
     console.log(`📊 Final response mapping:`, finalResults.map(r => ({
       keyword: r.keyword,
       api_key_used: r.api_key_used,
-      decision: r.decision
+      decision: r.decision,
+      results_count: r.full_results?.length || 0
     })));
     
     res.json({
@@ -703,20 +809,86 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
     });
 
   } catch (error) {
-    console.error('SERP analysis error:', error);
+    console.error('❌ SERP analysis error:', error);
+    console.error('❌ Full error stack:', error.stack);
     
     const processingTime = Date.now() - startTime;
     
     // Update log with error
-    await supabase.from('analysis_logs').update({
-      status: 'failed',
-      error_message: error.message,
-      processing_time: processingTime
-    }).eq('request_id', requestId);
+    try {
+      await supabase.from('analysis_logs').update({
+        status: 'failed',
+        error_message: error.message,
+        processing_time: processingTime
+      }).eq('request_id', requestId);
+    } catch (updateError) {
+      console.error('❌ Failed to update error log:', updateError);
+    }
 
     res.status(500).json({ 
       error: 'Analysis failed', 
-      message: 'An error occurred during SERP analysis' 
+      message: error.message || 'An error occurred during SERP analysis',
+      request_id: requestId
+    });
+  }
+});
+
+// Simple test endpoint to debug issues
+app.post('/api/test-simple', authMiddleware, async (req, res) => {
+  try {
+    console.log('🧪 Simple test endpoint called');
+    console.log('👤 User:', req.user.id);
+    console.log('📝 Request body:', req.body);
+    
+    // Test Supabase connection
+    const { data: testData, error: testError } = await supabase
+      .from('api_keys')
+      .select('count')
+      .eq('user_id', req.user.id)
+      .limit(1);
+    
+    if (testError) {
+      console.error('❌ Supabase test failed:', testError);
+      return res.status(500).json({
+        error: 'Database connection failed',
+        details: testError.message
+      });
+    }
+    
+    // Test API keys
+    const { data: apiKeys, error: keysError } = await supabase
+      .from('api_keys')
+      .select('*')
+      .eq('user_id', req.user.id);
+    
+    if (keysError) {
+      console.error('❌ API keys fetch failed:', keysError);
+      return res.status(500).json({
+        error: 'Failed to fetch API keys',
+        details: keysError.message
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Simple test completed successfully',
+      user_id: req.user.id,
+      api_keys_count: apiKeys?.length || 0,
+      api_keys: apiKeys?.map(key => ({
+        id: key.id,
+        name: key.key_name,
+        status: key.status,
+        provider: key.provider
+      })) || [],
+      supabase_connected: true
+    });
+    
+  } catch (error) {
+    console.error('❌ Simple test error:', error);
+    res.status(500).json({
+      error: 'Test failed',
+      message: error.message,
+      stack: error.stack
     });
   }
 });
