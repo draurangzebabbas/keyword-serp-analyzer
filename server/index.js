@@ -226,139 +226,24 @@ const callApifySerpApi = async (keyword, apiKey, country = "US", page = 1) => {
       throw new Error('No URLs found in SERP results');
     }
 
-    // Step 2: Start Metrics actor asynchronously
-    console.log(`📊 Starting Apify Metrics API for ${urls.length} URLs`);
-    
-    const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        "url": urls
-      })
-    });
-
-    if (!metricsResponse.ok) {
-      const errorText = await metricsResponse.text();
-      throw new Error(`Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
-    }
-
-    const metricsRunData = await metricsResponse.json();
-    const metricsRunId = metricsRunData.data?.id;
-
-    if (!metricsRunId) {
-      throw new Error('No run ID received from Apify Metrics API');
-    }
-
-    // Wait for Metrics run to complete
-    console.log(`⏳ Waiting for Metrics run to complete...`);
-    let metricsRunAttempts = 0;
-    const maxMetricsRunAttempts = 60;
-
-    while (metricsRunAttempts < maxMetricsRunAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      metricsRunAttempts++;
-
-      const metricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
-      });
-
-      if (!metricsStatusResponse.ok) {
-        continue;
-      }
-
-      const metricsStatusData = await metricsStatusResponse.json();
-
-      if (metricsStatusData.data?.status === 'SUCCEEDED') {
-        console.log(`✅ Metrics run completed successfully`);
-        break;
-      } else if (metricsStatusData.data?.status === 'FAILED') {
-        throw new Error(`Metrics run failed: ${metricsStatusData.data?.meta?.errorMessage || 'Unknown error'}`);
-      }
-    }
-
-    if (metricsRunAttempts >= maxMetricsRunAttempts) {
-      throw new Error('Metrics run timed out after 5 minutes');
-    }
-
-    // Get dataset ID from completed run
-    const finalMetricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
-
-    const finalMetricsStatusData = await finalMetricsStatusResponse.json();
-    const metricsDatasetId = finalMetricsStatusData.data?.defaultDatasetId;
-
-    if (!metricsDatasetId) {
-      throw new Error('No dataset ID received from completed Apify Metrics run');
-    }
-
-    // Wait for dataset to populate
-    await new Promise(resolve => setTimeout(resolve, 20000));
-
-    // Poll dataset until we have results
-    let metricsData = null;
-    let metricsAttempts = 0;
-    const maxMetricsAttempts = 60;
-
-    while (metricsAttempts < maxMetricsAttempts) {
-      const metricsResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`
-        }
-      });
-
-      if (!metricsResultsResponse.ok) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        metricsAttempts++;
-        continue;
-      }
-
-      metricsData = await metricsResultsResponse.json();
-
-      if (metricsData && metricsData.length > 0) {
-        console.log(`✅ Metrics results received: ${metricsData.length} items`);
-        break;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      metricsAttempts++;
-    }
-
-    if (!metricsData || metricsData.length === 0) {
-      throw new Error('Metrics dataset is empty after 5 minutes of polling');
-    }
-
-    if (!Array.isArray(metricsData)) {
-      throw new Error('Invalid metrics data structure received from Apify');
-    }
-
-    // Step 3: Combine SERP results with metrics
-    const combinedResults = serpResults.map((result, index) => {
-      const metrics = metricsData.find(m => m.domain === result.url) || {};
-      
+    // Step 2: Process SERP results (Moz analysis will be done in batch later)
+    const processedResults = serpResults.map((result, index) => {
       return {
         position: result.position || index + 1,
         url: result.url,
         title: result.title,
         description: result.description,
-        domain_authority: metrics.domain_authority || 0,
-        page_authority: metrics.page_authority || 0,
-        spam_score: metrics.spam_score || 0
+        domain_authority: 0, // Will be filled in batch processing
+        page_authority: 0,   // Will be filled in batch processing
+        spam_score: 0        // Will be filled in batch processing
       };
     });
     
-    console.log(`✅ Combined ${combinedResults.length} results for: ${keyword}`);
+    console.log(`✅ Processed ${processedResults.length} SERP results for: ${keyword}`);
     
     return {
       keyword: keyword,
-      results: combinedResults,
+      results: processedResults,
       serp_features: relatedKeywords,
       knowledge_panel: knowledgePanel
     };
@@ -482,126 +367,267 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
 
     console.log(`🔑 Found ${sortedApiKeys.length} API keys for user ${req.user.id}`);
 
-    // 🚀 PARALLEL PROCESSING: Process keywords in batches of 10
-    const batchSize = 10;
-    const results = [];
-    const usedKeys = [];
-
-    for (let i = 0; i < keywords.length; i += batchSize) {
-      const batch = keywords.slice(i, i + batchSize);
-      console.log(`🔄 Processing batch ${Math.floor(i/batchSize) + 1}: ${batch.length} keywords`);
+    // 🚀 OPTIMIZED PARALLEL PROCESSING: Get SERP data first, then batch Moz analysis
+    console.log(`🔄 Starting optimized parallel processing for ${keywords.length} keywords`);
+    
+    // Step 1: Get SERP data for all keywords in parallel
+    const serpPromises = keywords.map(async (keyword, index) => {
+      const keyIndex = index % sortedApiKeys.length;
+      const currentKey = sortedApiKeys[keyIndex];
       
-      // Process batch in parallel
-      const batchPromises = batch.map(async (keyword, batchIndex) => {
-        const keyIndex = (i + batchIndex) % sortedApiKeys.length;
-        const currentKey = sortedApiKeys[keyIndex];
+      console.log(`🔍 Getting SERP data for: ${keyword} with API key: ${currentKey.key_name}`);
+      
+      try {
+        const serpResult = await callApifySerpApi(keyword, currentKey.key_value, country, page);
         
-        console.log(`🔍 Processing keyword: ${keyword} with API key: ${currentKey.key_name}`);
-        
+        // Reactivate the key on success
         try {
-          const serpResult = await callApifySerpApi(keyword, currentKey.api_key, country, page);
-          
-          // Calculate analysis metrics
-          const domains = serpResult.results.map(r => r.url);
-          const das = serpResult.results.map(r => r.domain_authority);
-          const averageDA = das.reduce((sum, da) => sum + da, 0) / das.length;
-          const lowDACount = das.filter(da => da < z).length; // Use z from config
-          const decision = lowDACount >= x ? 'Write' : 'Skip'; // Use x and z from config
+          await supabase.from('api_keys').update({
+            last_used: new Date().toISOString(),
+            failure_count: 0,
+            status: 'active',
+            last_failed: null
+          }).eq('id', currentKey.id);
+          console.log(`✅ Successfully reactivated API key: ${currentKey.key_name}`);
+        } catch (updateError) {
+          console.error(`❌ Error reactivating API key ${currentKey.key_name}:`, updateError);
+        }
 
-          const result = {
-            keyword,
-            api_key_used: currentKey.key_name,
-            domains: domains.slice(0, y), // Use y from config
-            average_da: Math.round(averageDA),
-            low_da_count: lowDACount,
-            decision,
-            serp_features: serpResult.serp_features || [],
-            full_results: serpResult.results,
-            write_skip_config_used: { x, y, z }, // Add config used
-            detailed_results: serpResult.results.map(r => ({
-              domain: r.url,
-              da: r.domain_authority || 0,
-              spam_score: r.spam_score || 0,
-              position: r.position,
-              title: r.title,
-              description: r.description
-            }))
-          };
-          
-          console.log(`✅ Created result for ${keyword}:`, {
-            keyword: result.keyword,
-            api_key_used: result.api_key_used,
-            decision: result.decision,
-            average_da: result.average_da,
-            results_count: result.full_results.length
+        return {
+          keyword,
+          api_key_used: currentKey.key_name,
+          serpResult,
+          success: true
+        };
+        
+      } catch (error) {
+        console.error(`❌ Error with API key ${currentKey.key_name}:`, error.message);
+        
+        // Enhanced error detection
+        const errorMessage = error.message.toLowerCase();
+        const isRateLimit = errorMessage.includes('rate') || errorMessage.includes('credit') || errorMessage.includes('429') || errorMessage.includes('quota');
+        const isInvalidKey = errorMessage.includes('invalid api key') || errorMessage.includes('401') || errorMessage.includes('unauthorized');
+        const isPermanentFailure = errorMessage.includes('not found') || errorMessage.includes('404') || errorMessage.includes('actor not found');
+        
+        let newStatus = 'failed';
+        
+        if (isRateLimit) {
+          newStatus = 'rate_limited';
+          console.log(`⚠️ Rate limit detected for API key: ${currentKey.key_name}`);
+        } else if (isInvalidKey || isPermanentFailure) {
+          newStatus = 'failed';
+          console.log(`❌ Permanent failure detected for API key: ${currentKey.key_name}`);
+        } else {
+          newStatus = 'failed';
+          console.log(`⚠️ Temporary failure detected for API key: ${currentKey.key_name}`);
+        }
+
+        // Update key status
+        try {
+          await supabase.from('api_keys').update({
+            status: newStatus,
+            last_failed: new Date().toISOString(),
+            failure_count: (currentKey.failure_count || 0) + 1
+          }).eq('id', currentKey.id);
+          console.log(`📝 Updated API key ${currentKey.key_name} status to: ${newStatus}`);
+        } catch (updateError) {
+          console.error(`❌ Error updating API key status:`, updateError);
+        }
+
+        return {
+          keyword,
+          api_key_used: null,
+          error: error.message,
+          success: false
+        };
+      }
+    });
+
+    // Wait for all SERP data to be collected
+    console.log(`⏳ Waiting for all SERP data to be collected...`);
+    const serpResults = await Promise.all(serpPromises);
+    
+    // Step 2: Collect all unique domains for batch Moz analysis
+    const allDomains = [];
+    const successfulSerpResults = [];
+    
+    serpResults.forEach(result => {
+      if (result.success && result.serpResult && result.serpResult.results) {
+        successfulSerpResults.push(result);
+        result.serpResult.results.forEach(serpItem => {
+          if (serpItem.url && !allDomains.includes(serpItem.url)) {
+            allDomains.push(serpItem.url);
+          }
+        });
+      }
+    });
+
+    console.log(`📊 Collected ${allDomains.length} unique domains from ${successfulSerpResults.length} successful SERP results`);
+
+    // Step 3: Batch Moz DA/PA analysis for all domains (if we have domains)
+    let domainMetrics = {};
+    if (allDomains.length > 0) {
+      console.log(`🚀 Starting batch Moz DA/PA analysis for ${allDomains.length} domains`);
+      
+      try {
+        // Use the first available API key for Moz analysis
+        const mozApiKey = sortedApiKeys.find(key => key.status === 'active')?.key_value;
+        if (!mozApiKey) {
+          throw new Error('No active API key available for Moz analysis');
+        }
+
+        // Start Moz Metrics actor for all domains at once
+        const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${mozApiKey}`
+          },
+          body: JSON.stringify({
+            "url": allDomains
+          })
+        });
+
+        if (!metricsResponse.ok) {
+          const errorText = await metricsResponse.text();
+          throw new Error(`Moz Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
+        }
+
+        const metricsRunData = await metricsResponse.json();
+        const metricsRunId = metricsRunData.data?.id;
+
+        if (!metricsRunId) {
+          throw new Error('No run ID received from Moz Metrics API');
+        }
+
+        // Wait for Moz Metrics run to complete (with timeout)
+        console.log(`⏳ Waiting for Moz Metrics run to complete...`);
+        let metricsRunAttempts = 0;
+        const maxMetricsRunAttempts = 30; // Reduced timeout to 2.5 minutes
+
+        while (metricsRunAttempts < maxMetricsRunAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          metricsRunAttempts++;
+
+          const metricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
+            headers: {
+              'Authorization': `Bearer ${mozApiKey}`
+            }
           });
 
-          // Reactivate the key
-          try {
-            await supabase.from('api_keys').update({
-              last_used: new Date().toISOString(),
-              failure_count: 0,
-              status: 'active',
-              last_failed: null
-            }).eq('id', currentKey.id);
-            console.log(`✅ Successfully reactivated API key: ${currentKey.key_name}`);
-          } catch (updateError) {
-            console.error(`❌ Error reactivating API key ${currentKey.key_name}:`, updateError);
+          if (!metricsStatusResponse.ok) {
+            continue;
           }
 
-          usedKeys.push(currentKey.id);
-          return result;
-          
-        } catch (error) {
-          console.error(`❌ Error with API key ${currentKey.key_name}:`, error.message);
-          
-          // Enhanced error detection
-          const errorMessage = error.message.toLowerCase();
-          const isRateLimit = errorMessage.includes('rate') || errorMessage.includes('credit') || errorMessage.includes('429') || errorMessage.includes('quota');
-          const isInvalidKey = errorMessage.includes('invalid api key') || errorMessage.includes('401') || errorMessage.includes('unauthorized');
-          const isPermanentFailure = errorMessage.includes('not found') || errorMessage.includes('404') || errorMessage.includes('actor not found');
-          
-          let newStatus = 'failed';
-          
-          if (isRateLimit) {
-            newStatus = 'rate_limited';
-            console.log(`⚠️ Rate limit detected for API key: ${currentKey.key_name}`);
-          } else if (isInvalidKey || isPermanentFailure) {
-            newStatus = 'failed';
-            console.log(`❌ Permanent failure detected for API key: ${currentKey.key_name}`);
-          } else {
-            newStatus = 'failed';
-            console.log(`⚠️ Temporary failure detected for API key: ${currentKey.key_name}`);
-          }
+          const metricsStatusData = await metricsStatusResponse.json();
 
-          // Update key status
-          try {
-            await supabase.from('api_keys').update({
-              status: newStatus,
-              last_failed: new Date().toISOString(),
-              failure_count: (currentKey.failure_count || 0) + 1
-            }).eq('id', currentKey.id);
-            console.log(`📝 Updated API key ${currentKey.key_name} status to: ${newStatus}`);
-          } catch (updateError) {
-            console.error(`❌ Error updating API key status:`, updateError);
+          if (metricsStatusData.data?.status === 'SUCCEEDED') {
+            console.log(`✅ Moz Metrics run completed successfully`);
+            break;
+          } else if (metricsStatusData.data?.status === 'FAILED') {
+            throw new Error(`Moz Metrics run failed: ${metricsStatusData.data?.meta?.errorMessage || 'Unknown error'}`);
           }
-
-          return {
-            keyword,
-            api_key_used: null,
-            error: error.message,
-            decision: 'Error',
-            detailed_results: []
-          };
         }
-      });
 
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
-      results.push(...batchResults);
-      
-      console.log(`✅ Batch ${Math.floor(i/batchSize) + 1} completed: ${batchResults.length} results`);
+        if (metricsRunAttempts >= maxMetricsRunAttempts) {
+          throw new Error('Moz Metrics run timed out after 2.5 minutes');
+        }
+
+        // Get Moz results
+        const finalMetricsStatusResponse = await fetch(`https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs/${metricsRunId}`, {
+          headers: {
+            'Authorization': `Bearer ${mozApiKey}`
+          }
+        });
+
+        const finalMetricsStatusData = await finalMetricsStatusResponse.json();
+        const metricsDatasetId = finalMetricsStatusData.data?.defaultDatasetId;
+
+        if (!metricsDatasetId) {
+          throw new Error('No dataset ID received from completed Moz Metrics run');
+        }
+
+        // Wait for dataset to populate
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Reduced wait time
+
+        // Get Moz results
+        const mozResultsResponse = await fetch(`https://api.apify.com/v2/datasets/${metricsDatasetId}/items`, {
+          headers: {
+            'Authorization': `Bearer ${mozApiKey}`
+          }
+        });
+
+        if (!mozResultsResponse.ok) {
+          throw new Error(`Failed to fetch Moz results: ${mozResultsResponse.status}`);
+        }
+
+        const mozResults = await mozResultsResponse.json();
+        
+        // Create domain metrics lookup
+        mozResults.forEach(item => {
+          if (item.url && item.domain_authority !== undefined) {
+            domainMetrics[item.url] = {
+              domain_authority: item.domain_authority || 0,
+              page_authority: item.page_authority || 0,
+              spam_score: item.spam_score || 0
+            };
+          }
+        });
+
+        console.log(`✅ Moz analysis completed for ${Object.keys(domainMetrics).length} domains`);
+
+      } catch (mozError) {
+        console.error(`❌ Moz analysis failed:`, mozError.message);
+        // Continue without Moz data - we'll use default values
+      }
     }
+
+    // Step 4: Process results with Moz data
+    const results = serpResults.map(result => {
+      if (!result.success) {
+        return {
+          keyword: result.keyword,
+          api_key_used: result.api_key_used,
+          error: result.error,
+          decision: 'Error',
+          detailed_results: []
+        };
+      }
+
+      const serpResult = result.serpResult;
+      const domains = serpResult.results.map(r => r.url);
+      const das = serpResult.results.map(r => {
+        // Use Moz data if available, otherwise use default
+        const mozData = domainMetrics[r.url];
+        return mozData ? mozData.domain_authority : (r.domain_authority || 0);
+      });
+      const averageDA = das.reduce((sum, da) => sum + da, 0) / das.length;
+      const lowDACount = das.filter(da => da < z).length;
+      const decision = lowDACount >= x ? 'Write' : 'Skip';
+
+      return {
+        keyword: result.keyword,
+        api_key_used: result.api_key_used,
+        domains: domains.slice(0, y),
+        average_da: Math.round(averageDA),
+        low_da_count: lowDACount,
+        decision,
+        serp_features: serpResult.serp_features || [],
+        full_results: serpResult.results,
+        write_skip_config_used: { x, y, z },
+        detailed_results: serpResult.results.map(r => {
+          const mozData = domainMetrics[r.url];
+          return {
+            domain: r.url,
+            da: mozData ? mozData.domain_authority : (r.domain_authority || 0),
+            spam_score: mozData ? mozData.spam_score : (r.spam_score || 0),
+            position: r.position,
+            title: r.title,
+            description: r.description
+          };
+        })
+      };
+    });
 
     const processingTime = Date.now() - startTime;
     console.log(`⏱️ Total processing time: ${processingTime}ms`);
@@ -611,7 +637,7 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       const { error: updateError } = await supabase.from('analysis_logs').update({
         status: 'completed',
         results: results,
-        api_keys_used: usedKeys,
+        api_keys_used: sortedApiKeys.map(key => ({ key_name: key.key_name, key_value: key.key_value })),
         processing_time: processingTime
       }).eq('request_id', requestId);
 
