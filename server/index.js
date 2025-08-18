@@ -481,20 +481,49 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
         }
 
         // Start Moz Metrics actor for all domains at once
-        const metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
+        console.log(`🔍 Using Moz actor: scrap3r~moz-da-pa-metrics`);
+        console.log(`🔍 Domains to analyze:`, allDomains.slice(0, 5), `... (${allDomains.length} total)`);
+        
+        // Try the primary Moz actor first (the one you're using in make.com)
+        let metricsResponse = await fetch('https://api.apify.com/v2/acts/scrap3r~moz-da-pa-metrics/runs', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${mozApiKey}`
           },
           body: JSON.stringify({
-            "url": allDomains
+            "url": allDomains,
+            "maxRequestRetries": 3,
+            "maxConcurrency": 5
           })
         });
 
         if (!metricsResponse.ok) {
           const errorText = await metricsResponse.text();
-          throw new Error(`Moz Metrics API failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
+          console.log(`❌ Primary Moz actor failed: ${metricsResponse.status} ${metricsResponse.statusText}`);
+          console.log(`🔍 Error details:`, errorText);
+          
+          // Try fallback Moz actor
+          console.log(`🔄 Trying fallback Moz actor: apify~moz-metrics-scraper`);
+          const fallbackResponse = await fetch('https://api.apify.com/v2/acts/apify~moz-metrics-scraper/runs', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${mozApiKey}`
+            },
+            body: JSON.stringify({
+              "url": allDomains,
+              "maxRequestRetries": 3,
+              "maxConcurrency": 5
+            })
+          });
+          
+          if (!fallbackResponse.ok) {
+            throw new Error(`Both Moz actors failed. Primary: ${metricsResponse.status}, Fallback: ${fallbackResponse.status}`);
+          }
+          
+          metricsResponse = fallbackResponse;
+          console.log(`✅ Using fallback Moz actor`);
         }
 
         const metricsRunData = await metricsResponse.json();
@@ -567,18 +596,39 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
 
         const mozResults = await mozResultsResponse.json();
         
-        // Create domain metrics lookup
+        console.log(`🔍 Raw Moz results:`, JSON.stringify(mozResults.slice(0, 2), null, 2));
+        console.log(`🔍 Total Moz results received:`, mozResults.length);
+        
+        // Create domain metrics lookup with better field detection
         mozResults.forEach(item => {
-          if (item.url && item.domain_authority !== undefined) {
-            domainMetrics[item.url] = {
+          console.log(`🔍 Processing Moz item:`, {
+            domain: item.domain,
+            url: item.url,
+            has_da: item.domain_authority !== undefined,
+            has_pa: item.page_authority !== undefined,
+            has_spam: item.spam_score !== undefined,
+            da_value: item.domain_authority,
+            pa_value: item.page_authority,
+            spam_value: item.spam_score
+          });
+          
+          // Moz actor returns 'domain' field, not 'url'
+          const domainKey = item.domain || item.url;
+          
+          if (domainKey && item.domain_authority !== undefined) {
+            domainMetrics[domainKey] = {
               domain_authority: item.domain_authority || 0,
               page_authority: item.page_authority || 0,
               spam_score: item.spam_score || 0
             };
+            console.log(`✅ Added metrics for ${domainKey}: DA=${item.domain_authority}, PA=${item.page_authority}, Spam=${item.spam_score}`);
+          } else {
+            console.log(`⚠️ Skipping item - missing domain or DA data:`, item);
           }
         });
 
         console.log(`✅ Moz analysis completed for ${Object.keys(domainMetrics).length} domains`);
+        console.log(`🔍 Domain metrics keys:`, Object.keys(domainMetrics));
 
       } catch (mozError) {
         console.error(`❌ Moz analysis failed:`, mozError.message);
@@ -603,6 +653,8 @@ app.post('/api/analyze-serps', rateLimitMiddleware, authMiddleware, async (req, 
       const das = serpResult.results.map(r => {
         // Use Moz data if available, otherwise use default
         const mozData = domainMetrics[r.url];
+        console.log(`🔍 Looking for Moz data for URL: ${r.url}`);
+        console.log(`🔍 Found Moz data:`, mozData);
         return mozData ? mozData.domain_authority : (r.domain_authority || 0);
       });
       const averageDA = das.reduce((sum, da) => sum + da, 0) / das.length;
